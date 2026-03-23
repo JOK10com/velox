@@ -71,8 +71,31 @@ _pending: dict = {}
 # 공지 저장
 announcements: list = []
 
-# ── DB 테이블 생성 (gunicorn 포함 항상 실행) ─────────────────
+# ── DB 테이블 생성 + 컬럼 마이그레이션 ──────────────────────
+import sqlite3 as _sqlite3
+
+def _migrate():
+    try:
+        con = _sqlite3.connect(DB_PATH)
+        cur = con.cursor()
+        cur.execute("PRAGMA table_info(user)")
+        existing = [row[1] for row in cur.fetchall()]
+        # 새로 추가된 컬럼들 자동 추가
+        cols = [
+            ("is_admin",        "INTEGER NOT NULL DEFAULT 0"),
+            ("cost_basis_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ]
+        for col, typedef in cols:
+            if col not in existing:
+                cur.execute(f"ALTER TABLE user ADD COLUMN {col} {typedef}")
+                print(f"[VELOX] 컬럼 추가: {col}")
+        con.commit()
+        con.close()
+    except Exception as e:
+        print(f"[VELOX] 마이그레이션: {e}")
+
 SQLModel.metadata.create_all(engine)
+_migrate()
 print(f"[VELOX] DB 준비 완료: {DB_PATH}")
 
 
