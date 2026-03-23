@@ -2,14 +2,9 @@ from __future__ import annotations
 
 import os
 import json
-import random
 import hashlib
-import smtplib
-import threading
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 from flask import Flask, render_template, request, jsonify, session
 from sqlmodel import Field, Session, SQLModel, create_engine, select
@@ -27,14 +22,6 @@ DB_PATH = os.path.join(DB_DIR, "database.db")
 print(f"[VELOX] DB 경로: {DB_PATH}")
 
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
-
-# ── SMTP 설정 (환경변수) ──────────────
-smtp_config = {
-    "host": os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-    "port": int(os.environ.get("SMTP_PORT", 465)),
-    "email": os.environ.get("SMTP_EMAIL", ""),
-    "password": os.environ.get("SMTP_PASSWORD", ""),
-}
 
 # ── 관리자 이메일 / 초기 지분 ────────────────
 ADMIN_EMAIL = "flyingkjo@dgsw.hs.kr"
@@ -61,7 +48,6 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-_pending: dict = {}
 announcements: list = []
 
 # ── DB 테이블 생성 + 마이그레이션 ──────────────
@@ -124,27 +110,6 @@ def require_admin(f):
         return f(*args, **kwargs)
     return decorated
 
-def send_email_bg(to_email: str, code: str):
-    cfg = smtp_config
-    if not cfg["email"] or not cfg["password"]:
-        print("[SMTP] 이메일 설정 없음, 발송 안함")
-        return
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[VELOX] 인증번호: {code}"
-        msg["From"]    = f"VELOX <{cfg['email']}>"
-        msg["To"]      = to_email
-        html = f"<h2>VELOX 인증번호</h2><div>{code}</div><p>5분 내 입력</p>"
-        msg.attach(MIMEText(f"인증번호: {code}", "plain"))
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=10) as smtp:
-            print("[SMTP] 로그인 시도 중...")
-            smtp.login(cfg["email"], cfg["password"])
-            smtp.sendmail(cfg["email"], to_email, msg.as_string())
-        print(f"[VELOX] 이메일 발송 완료 → {to_email}")
-    except Exception as e:
-        print(f"[SMTP 오류] {e}")
-
 # ── Routes ──────────────────────────────
 @app.route("/")
 def index():
@@ -171,50 +136,27 @@ def api_login():
     session["user_id"] = user.id
     return jsonify({"ok": True, "user": user_to_dict(user)})
 
-@app.route("/api/send-code", methods=["POST"])
-def api_send_code():
-    data = request.get_json(silent=True) or {}
-    username = data.get("username", "").strip()
-    email    = data.get("email", "").strip().lower()
-    if not username or not email:
-        return jsonify({"ok": False, "error": "모든 항목을 입력해주세요."})
-    if "@" not in email or "." not in email.split("@")[-1]:
-        return jsonify({"ok": False, "error": "올바른 이메일 주소를 입력하세요."})
-    with Session(engine) as db:
-        if db.exec(select(User).where(User.username == username)).first():
-            return jsonify({"ok": False, "error": "이미 사용 중인 아이디입니다."})
-        if db.exec(select(User).where(User.email == email)).first():
-            return jsonify({"ok": False, "error": "이미 가입된 이메일입니다."})
-    code = str(random.randint(100000, 999999))
-    _pending[email] = {"code": code, "expires": datetime.now(timezone.utc) + timedelta(minutes=5)}
-    print(f"[메일 테스트] {email} 인증번호: {code}")
-    if smtp_config["email"] and smtp_config["password"]:
-        threading.Thread(target=send_email_bg, args=(email, code), daemon=True).start()
-    return jsonify({"ok": True, "code": code})
-
+# [수정됨] 이메일 인증코드 로직이 삭제되고 즉시 가입되도록 변경
 @app.route("/api/signup", methods=["POST"])
 def api_signup():
     data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password = data.get("password", "")
     email    = data.get("email", "").strip().lower()
-    code     = data.get("code", "").strip()
-    pending = _pending.get(email)
-    if not pending:
-        return jsonify({"ok": False, "error": "인증번호를 먼저 전송해주세요."})
-    if datetime.now(timezone.utc) > pending["expires"]:
-        del _pending[email]
-        return jsonify({"ok": False, "error": "인증번호 만료"})
-    if pending["code"] != code:
-        return jsonify({"ok": False, "error": "인증번호 틀림"})
+
+    if not username or not password or not email:
+        return jsonify({"ok": False, "error": "모든 항목을 입력해주세요."})
+
     is_admin = (email == ADMIN_EMAIL)
     portfolio  = {"btc": ADMIN_BTC_QTY} if is_admin else {}
     cost_basis = {"btc": ADMIN_BTC_QTY*ADMIN_BTC_PRICE} if is_admin else {}
+    
     with Session(engine) as db:
         if db.exec(select(User).where(User.username == username)).first():
             return jsonify({"ok": False, "error": "이미 사용 중인 아이디입니다."})
         if db.exec(select(User).where(User.email == email)).first():
             return jsonify({"ok": False, "error": "이미 가입된 이메일입니다."})
+        
         user = User(
             username=username,
             email=email,
@@ -229,7 +171,7 @@ def api_signup():
         db.commit()
         db.refresh(user)
         session["user_id"] = user.id
-    del _pending[email]
+
     print(f"[가입완료] {username} ({email}) {'[관리자]' if is_admin else ''}")
     return jsonify({"ok": True, "user": user_to_dict(user)})
 
@@ -237,6 +179,30 @@ def api_signup():
 def logout():
     session.clear()
     return jsonify({"ok": True})
+
+@app.route("/api/save", methods=["POST"])
+def api_save():
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False}), 401
+    data = request.get_json(silent=True) or {}
+    with Session(engine) as db:
+        u = db.get(User, user.id)
+        if not u:
+            return jsonify({"ok": False}), 404
+        if "balance"          in data: u.balance          = float(data["balance"])
+        if "tierIdx"          in data: u.tier_idx         = int(data["tierIdx"])
+        if "portfolio"        in data: u.portfolio_json   = json.dumps(data["portfolio"])
+        if "loans"            in data: u.loans_json       = json.dumps(data["loans"])
+        if "history"          in data: u.history_json     = json.dumps(data["history"][-100:])
+        if "transfers"        in data: u.transfers_json   = json.dumps(data["transfers"][-50:])
+        if "todayTransferred" in data: u.today_transferred = float(data["todayTransferred"])
+        u.updated_at = datetime.now(timezone.utc)
+        db.add(u)
+        db.commit()
+    return jsonify({"ok": True})
+
+# ── 기타 필요한 라우트가 있다면 이 부분에 추가 ──
 
 # ── 실행 ──────────────────────────────
 if __name__ == "__main__":
