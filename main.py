@@ -27,7 +27,14 @@ app.secret_key = os.environ.get("SECRET_KEY", "velox-dev-secret-key-change-in-pr
 
 # ── DB 경로 (로컬: database.db / Render: /data/database.db) ─
 DB_PATH = os.environ.get("DB_PATH", "database.db")
-engine  = create_engine(f"sqlite:///{DB_PATH}", echo=False)
+
+# DB 파일이 들어갈 폴더가 없으면 자동 생성
+_db_dir = os.path.dirname(DB_PATH)
+if _db_dir and not os.path.exists(_db_dir):
+    os.makedirs(_db_dir, exist_ok=True)
+    print(f"[VELOX] 폴더 생성: {_db_dir}")
+
+engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 # ── SMTP 설정 (환경변수 우선, 없으면 빈 값) ──────────────────
 smtp_config = {
     "host":     os.environ.get("SMTP_HOST", "smtp.gmail.com"),
