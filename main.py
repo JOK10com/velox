@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import random
 import hashlib
@@ -13,36 +14,31 @@ from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, jsonify, session
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
+# ── 앱 설정 ────────────────────────────────────────────────
 app = Flask(__name__)
-app.secret_key = "velox-secret-key"
+app.secret_key = os.environ.get("SECRET_KEY", "velox-dev-secret-key-change-in-prod")
 
-engine = create_engine("sqlite:///database.db", echo=False)
+# ── DB 경로 (로컬: database.db / Render: /data/database.db) ─
+DB_PATH = os.environ.get("DB_PATH", "database.db")
+engine  = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 
-# ── SMTP 설정 ──────────────────────────
+# ── SMTP 설정 (환경변수 우선, 없으면 빈 값) ──────────────────
 smtp_config = {
-    "host": "smtp.gmail.com",
-    "port": 465,
-    "email": "jok10com@gmail.com",
-    "password": "kpjf yjaq grka bsrw",
+    "host":     os.environ.get("SMTP_HOST", "smtp.gmail.com"),
+    "port":     int(os.environ.get("SMTP_PORT", "465")),
+    "email":    os.environ.get("SMTP_EMAIL", ""),
+    "password": os.environ.get("SMTP_PASSWORD", ""),
 }
 
-# ── 관리자 이메일 ──────────────────────
+# ── 관리자 이메일 ──────────────────────────────────────────
 ADMIN_EMAIL = "flyingkjo@dgsw.hs.kr"
 
-# ── 관리자 초기 지분 (각 종목 1%) ────
-ADMIN_ASSETS = {
-    "os":  {"shares": 2_680_000_000,  "price": 250_000   },  # 오성전자
-    "mr":  {"shares": 425_000_000,    "price": 200_000   },  # 미래자동차
-    "nv":  {"shares": 13_400_000_000, "price": 500_000   },  # AND비디아
-    "bn":  {"shares": 19_166_666_667, "price": 300_000   },  # bAnana
-    "btc": {"shares": 40_000_000,     "price": 50_000_000},  # 바이트코인
-    "bth": {"shares": 95_714_286,     "price": 7_000_000 },  # Both코인
-    "shi": {"shares": 11_250_000_000, "price": 2_000     },  # 시발이누
-    "dge": {"shares": 1_650_000_000,  "price": 20_000    },  # 닷지코인
-}
-ADMIN_SHARE_PCT = 0.01  # 1%
+# ── 관리자 초기 지분 (바이트코인 0.1% = 40,000개) ───────────
+ADMIN_BTC_QTY   = int(40_000_000 * 0.001)
+ADMIN_BTC_PRICE = 50_000_000
 
 
+# ── 모델 ──────────────────────────────────────────────────
 class User(SQLModel, table=True):
     id: Optional[int]        = Field(default=None, primary_key=True)
     username: str             = Field(unique=True, index=True)
@@ -63,9 +59,14 @@ class User(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+# 인증번호 임시 저장
 _pending: dict = {}
 
+# 공지 저장
+announcements: list = []
 
+
+# ── 헬퍼 ──────────────────────────────────────────────────
 def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
 
@@ -95,7 +96,6 @@ def get_current_user() -> Optional[User]:
 
 
 def require_admin(f):
-    """관리자 전용 라우트 데코레이터"""
     from functools import wraps
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -135,9 +135,9 @@ def send_email_bg(to_email: str, code: str):
         print(f"[SMTP 오류] {e}")
 
 
-# ══════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
 #  Routes
-# ══════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
 
 @app.route("/")
 def index():
@@ -152,11 +152,11 @@ def api_me():
     return jsonify({"loggedIn": True, "user": user_to_dict(user)})
 
 
-# ── 인증 ────────────────────────────────
+# ── 인증 ──────────────────────────────────────────────────
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
-    data = request.get_json(silent=True) or {}
+    data     = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password = data.get("password", "")
     if not username or not password:
@@ -171,32 +171,39 @@ def api_login():
 
 @app.route("/api/send-code", methods=["POST"])
 def api_send_code():
-    data = request.get_json(silent=True) or {}
+    data     = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     email    = data.get("email", "").strip().lower()
+
     if not username or not email:
         return jsonify({"ok": False, "error": "모든 항목을 입력해주세요."})
     if "@" not in email or "." not in email.split("@")[-1]:
         return jsonify({"ok": False, "error": "올바른 이메일 주소를 입력하세요."})
+
     with Session(engine) as db:
         if db.exec(select(User).where(User.username == username)).first():
             return jsonify({"ok": False, "error": "이미 사용 중인 아이디입니다."})
         if db.exec(select(User).where(User.email == email)).first():
             return jsonify({"ok": False, "error": "이미 가입된 이메일입니다."})
+
     code = str(random.randint(100000, 999999))
     _pending[email] = {
         "code":    code,
         "expires": datetime.now(timezone.utc) + timedelta(minutes=5),
     }
+
     print(f"\n{'='*40}\n  이메일  : {email}\n  인증번호: {code}\n{'='*40}\n")
+
+    # SMTP 설정 있으면 이메일 발송
     if smtp_config["email"] and smtp_config["password"]:
         threading.Thread(target=send_email_bg, args=(email, code), daemon=True).start()
+
     return jsonify({"ok": True, "code": code})
 
 
 @app.route("/api/signup", methods=["POST"])
 def api_signup():
-    data = request.get_json(silent=True) or {}
+    data     = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password = data.get("password", "")
     email    = data.get("email", "").strip().lower()
@@ -207,22 +214,17 @@ def api_signup():
         return jsonify({"ok": False, "error": "인증번호를 먼저 전송해주세요."})
     if datetime.now(timezone.utc) > pending["expires"]:
         del _pending[email]
-        return jsonify({"ok": False, "error": "인증번호가 만료됐습니다."})
+        return jsonify({"ok": False, "error": "인증번호가 만료됐습니다. 다시 전송해주세요."})
     if pending["code"] != code:
         return jsonify({"ok": False, "error": "인증번호가 틀렸습니다."})
 
     is_admin = (email == ADMIN_EMAIL)
 
-    # 관리자 초기 포트폴리오: 모든 종목 각 1%
     if is_admin:
-        portfolio  = {}
-        cost_basis = {}
-        for asset_id, info in ADMIN_ASSETS.items():
-            qty = int(info["shares"] * ADMIN_SHARE_PCT)
-            portfolio[asset_id]  = qty
-            cost_basis[asset_id] = qty * info["price"]
-        start_balance = 10_000_000_000.0  # 관리자 초기 잔고 100억
-        tier_idx = 4  # 플래티넘
+        portfolio  = {"btc": ADMIN_BTC_QTY}
+        cost_basis = {"btc": ADMIN_BTC_QTY * ADMIN_BTC_PRICE}
+        start_balance = 100_000.0   # 일반 유저와 동일 잔고
+        tier_idx = 0                # 일반 등급에서 시작
     else:
         portfolio  = {}
         cost_basis = {}
@@ -234,13 +236,14 @@ def api_signup():
             return jsonify({"ok": False, "error": "이미 사용 중인 아이디입니다."})
         if db.exec(select(User).where(User.email == email)).first():
             return jsonify({"ok": False, "error": "이미 가입된 이메일입니다."})
+
         user = User(
-            username      = username,
-            email         = email,
-            password_hash = hash_pw(password),
-            is_admin      = is_admin,
-            balance       = start_balance,
-            tier_idx      = tier_idx,
+            username        = username,
+            email           = email,
+            password_hash   = hash_pw(password),
+            is_admin        = is_admin,
+            balance         = start_balance,
+            tier_idx        = tier_idx,
             portfolio_json  = json.dumps(portfolio),
             cost_basis_json = json.dumps(cost_basis),
         )
@@ -260,7 +263,7 @@ def logout():
     return jsonify({"ok": True})
 
 
-# ── 게임 상태 저장 ───────────────────────
+# ── 게임 상태 저장 ─────────────────────────────────────────
 
 @app.route("/api/save", methods=["POST"])
 def api_save():
@@ -286,12 +289,11 @@ def api_save():
     return jsonify({"ok": True})
 
 
-# ── 관리자 API ───────────────────────────
+# ── 관리자 API ─────────────────────────────────────────────
 
 @app.route("/api/admin/users")
 @require_admin
 def admin_get_users():
-    """전체 유저 목록 조회"""
     with Session(engine) as db:
         users = db.exec(select(User)).all()
     return jsonify({"ok": True, "users": [
@@ -311,19 +313,18 @@ def admin_get_users():
 @app.route("/api/admin/user/<int:uid>/balance", methods=["POST"])
 @require_admin
 def admin_set_balance(uid: int):
-    """특정 유저 잔액 조정"""
-    data = request.get_json(silent=True) or {}
+    data   = request.get_json(silent=True) or {}
     amount = data.get("amount")
-    mode   = data.get("mode", "set")   # set | add | subtract
+    mode   = data.get("mode", "set")
     if amount is None:
         return jsonify({"ok": False, "error": "amount 필요"})
     with Session(engine) as db:
         u = db.get(User, uid)
         if not u:
             return jsonify({"ok": False, "error": "유저 없음"}), 404
-        if mode == "set":      u.balance  = float(amount)
-        elif mode == "add":    u.balance += float(amount)
-        elif mode == "subtract": u.balance = max(0, u.balance - float(amount))
+        if mode == "set":        u.balance  = float(amount)
+        elif mode == "add":      u.balance += float(amount)
+        elif mode == "subtract": u.balance  = max(0, u.balance - float(amount))
         db.add(u); db.commit()
     return jsonify({"ok": True, "balance": u.balance})
 
@@ -331,7 +332,6 @@ def admin_set_balance(uid: int):
 @app.route("/api/admin/user/<int:uid>/tier", methods=["POST"])
 @require_admin
 def admin_set_tier(uid: int):
-    """특정 유저 티어 강제 변경"""
     data = request.get_json(silent=True) or {}
     tier = data.get("tier")
     if tier is None or not (0 <= int(tier) <= 4):
@@ -348,7 +348,6 @@ def admin_set_tier(uid: int):
 @app.route("/api/admin/user/<int:uid>/ban", methods=["POST"])
 @require_admin
 def admin_ban_user(uid: int):
-    """유저 잔액 0으로 초기화 (제재)"""
     with Session(engine) as db:
         u = db.get(User, uid)
         if not u or u.is_admin:
@@ -363,18 +362,17 @@ def admin_ban_user(uid: int):
 @app.route("/api/admin/user/<int:uid>/reset", methods=["POST"])
 @require_admin
 def admin_reset_user(uid: int):
-    """유저 자산 완전 초기화 (잔고 10만, 티어 0)"""
     with Session(engine) as db:
         u = db.get(User, uid)
         if not u or u.is_admin:
             return jsonify({"ok": False, "error": "불가"}), 400
-        u.balance          = 100_000.0
-        u.tier_idx         = 0
-        u.portfolio_json   = "{}"
-        u.cost_basis_json  = "{}"
-        u.loans_json       = "[]"
-        u.history_json     = "[]"
-        u.transfers_json   = "[]"
+        u.balance           = 100_000.0
+        u.tier_idx          = 0
+        u.portfolio_json    = "{}"
+        u.cost_basis_json   = "{}"
+        u.loans_json        = "[]"
+        u.history_json      = "[]"
+        u.transfers_json    = "[]"
         u.today_transferred = 0.0
         db.add(u); db.commit()
     return jsonify({"ok": True})
@@ -383,15 +381,13 @@ def admin_reset_user(uid: int):
 @app.route("/api/admin/announce", methods=["POST"])
 @require_admin
 def admin_announce():
-    """공지 메시지 (현재는 로그 출력 — 프론트에서 폴링 가능)"""
     data = request.get_json(silent=True) or {}
-    msg = data.get("message", "").strip()
+    msg  = data.get("message", "").strip()
     if not msg:
         return jsonify({"ok": False, "error": "메시지 필요"})
-    # 서버 메모리에 저장 (폴링 방식)
     announcements.append({
         "message": msg,
-        "time": datetime.now(timezone.utc).strftime("%H:%M"),
+        "time":    datetime.now(timezone.utc).strftime("%H:%M"),
     })
     if len(announcements) > 20:
         announcements.pop(0)
@@ -404,7 +400,7 @@ def get_announcements():
     return jsonify({"ok": True, "list": announcements})
 
 
-# ── SMTP 설정 ────────────────────────────
+# ── SMTP 설정 ──────────────────────────────────────────────
 
 @app.route("/api/smtp-config", methods=["GET"])
 def get_smtp_config():
@@ -441,13 +437,10 @@ def test_smtp():
         return jsonify({"ok": False, "error": str(e)})
 
 
-# ── 전역 공지 저장소 ─────────────────────
-announcements: list = []
-
-
+# ── 실행 ───────────────────────────────────────────────────
 if __name__ == "__main__":
     SQLModel.metadata.create_all(engine)
     print("\n✅ database.db 준비 완료")
     print(f"👑 관리자 이메일: {ADMIN_EMAIL}")
     print("🚀 서버: http://localhost:5000\n")
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
