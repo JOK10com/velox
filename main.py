@@ -28,7 +28,6 @@ app.secret_key = os.environ.get("SECRET_KEY", "velox-dev-secret-key-change-in-pr
 # ── DB 경로 (로컬: database.db / Render: /data/database.db) ─
 DB_PATH = os.environ.get("DB_PATH", "database.db")
 engine  = create_engine(f"sqlite:///{DB_PATH}", echo=False)
-
 # ── SMTP 설정 (환경변수 우선, 없으면 빈 값) ──────────────────
 smtp_config = {
     "host":     os.environ.get("SMTP_HOST", "smtp.gmail.com"),
@@ -71,6 +70,10 @@ _pending: dict = {}
 
 # 공지 저장
 announcements: list = []
+
+# ── DB 테이블 생성 (gunicorn 포함 항상 실행) ─────────────────
+SQLModel.metadata.create_all(engine)
+print(f"[VELOX] DB 준비 완료: {DB_PATH}")
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────
@@ -446,8 +449,6 @@ def test_smtp():
 
 # ── 실행 ───────────────────────────────────────────────────
 if __name__ == "__main__":
-    SQLModel.metadata.create_all(engine)
-    print("\n✅ database.db 준비 완료")
     print(f"👑 관리자 이메일: {ADMIN_EMAIL}")
     print("🚀 서버: http://localhost:5000\n")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
