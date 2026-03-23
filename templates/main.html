@@ -302,73 +302,26 @@ nav{flex:1;padding:10px 0;overflow-y:auto;}
 
     <!-- 회원가입 폼 -->
     <div id="form-signup" class="login-box" style="display:none;">
-      <!-- Step 1 -->
-      <div id="signup-step1">
-        <div class="form-group">
-          <label class="form-label">아이디</label>
-          <input class="form-input" id="su-username" type="text" placeholder="영문·숫자 4~20자"
-            onkeydown="if(event.key==='Enter')document.getElementById('su-password').focus()"/>
-        </div>
-        <div class="form-group">
-          <label class="form-label">비밀번호</label>
-          <input class="form-input" id="su-password" type="password" placeholder="8자 이상"
-            onkeydown="if(event.key==='Enter')document.getElementById('su-password2').focus()"/>
-        </div>
-        <div class="form-group">
-          <label class="form-label">비밀번호 확인</label>
-          <input class="form-input" id="su-password2" type="password" placeholder="비밀번호 재입력"
-            onkeydown="if(event.key==='Enter')document.getElementById('su-email').focus()"/>
-        </div>
-        <div class="form-group">
-          <label class="form-label">이메일</label>
-          <input class="form-input" id="su-email" type="email" placeholder="example@naver.com"
-            onkeydown="if(event.key==='Enter')requestVerification()"/>
-          <div class="form-hint">모든 이메일 주소 사용 가능</div>
-        </div>
-        <div id="su-step1-err" style="color:var(--red);font-size:.78rem;min-height:18px;margin-bottom:10px;"></div>
-        <button class="btn btn-primary btn-full" id="send-code-btn" onclick="requestVerification()">인증번호 전송</button>
+      <div class="form-group">
+        <label class="form-label">아이디</label>
+        <input class="form-input" id="su-username" type="text" placeholder="영문·숫자 4~20자"
+          onkeydown="if(event.key==='Enter')document.getElementById('su-password').focus()"/>
       </div>
-
-      <!-- Step 2 -->
-      <div id="signup-step2" style="display:none;">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">
-          <div>
-            <div style="font-size:.7rem;color:var(--text3);margin-bottom:2px;">인증번호 전송됨</div>
-            <div style="font-size:.85rem;font-weight:600;" id="su-email-display"></div>
-          </div>
-          <button onclick="switchToStep1()" style="font-size:.75rem;color:var(--blue);text-decoration:underline;background:none;border:none;cursor:pointer;">수정</button>
-        </div>
-        <div class="form-group">
-          <label class="form-label">인증번호 6자리</label>
-          <input class="form-input" id="su-code" type="text" maxlength="6" inputmode="numeric"
-            placeholder="인증번호 6자리 입력"
-            style="text-align:center;font-size:1.5rem;font-family:var(--font-mono);font-weight:700;letter-spacing:8px;"
-            oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6);if(this.value.length===6)doSignup();"
-            onkeydown="if(event.key==='Enter')doSignup();"/>
-          <div style="display:flex;justify-content:space-between;margin-top:6px;">
-            <div class="form-hint">메일로 전송된 6자리 숫자를 입력하세요</div>
-            <div id="code-timer" style="font-family:var(--font-mono);font-size:.75rem;color:var(--text3);font-weight:600;"></div>
-          </div>
-        </div>
-        <div id="su-step2-err" style="color:var(--red);font-size:.78rem;min-height:18px;margin-bottom:10px;"></div>
-        <button class="btn btn-primary btn-full" id="verify-btn" onclick="doSignup()">가입 완료</button>
-        <div style="text-align:center;margin-top:10px;">
-          <button id="resend-btn" onclick="requestVerification(true)"
-            style="font-size:.76rem;color:var(--text3);text-decoration:underline;background:none;border:none;cursor:pointer;">
-            인증번호 재전송
-          </button>
-        </div>
+      <div class="form-group">
+        <label class="form-label">비밀번호</label>
+        <input class="form-input" id="su-password" type="password" placeholder="8자 이상"
+          onkeydown="if(event.key==='Enter')document.getElementById('su-password2').focus()"/>
       </div>
+      <div class="form-group">
+        <label class="form-label">비밀번호 확인</label>
+        <input class="form-input" id="su-password2" type="password" placeholder="비밀번호 재입력"
+          onkeydown="if(event.key==='Enter')doSignup()"/>
+      </div>
+      <div id="su-err" style="color:var(--red);font-size:.78rem;min-height:18px;margin-bottom:10px;"></div>
+      <button class="btn btn-primary btn-full" id="signup-btn" onclick="doSignup()">회원가입</button>
     </div>
 
-    <div style="text-align:center;margin:14px 0 4px;">
-      <button onclick="openSmtpModal()"
-        style="font-size:.76rem;color:var(--text3);background:none;border:none;cursor:pointer;text-decoration:underline;">
-        ⚙️ 이메일 발송 설정 (선택)
-      </button>
-    </div>
-
-    <div class="login-features">
+        <div class="login-features">
       <div class="login-feature"><div class="feat-icon">📈</div><div class="feat-title">주식 &amp; 코인</div><div class="feat-desc">실시간 시세 변동</div></div>
       <div class="login-feature"><div class="feat-icon">🎰</div><div class="feat-title">도박 시스템</div><div class="feat-desc">경마·바카라·블랙잭</div></div>
       <div class="login-feature"><div class="feat-icon">🏦</div><div class="feat-title">은행 대출</div><div class="feat-desc">티어별 한도 시스템</div></div>
@@ -658,133 +611,7 @@ function updateTicker() {
 /* ════════════════════════════════════════
    AUTH
 ════════════════════════════════════════ */
-let _verifyCode = '';
-let codeTimerInterval = null;
 
-function switchAuthTab(tab) {
-  const isLogin = tab === 'login';
-  document.getElementById('tab-login').style.background  = isLogin ? 'var(--accent)' : 'var(--bg)';
-  document.getElementById('tab-login').style.color       = isLogin ? '#fff' : 'var(--text3)';
-  document.getElementById('tab-signup').style.background = isLogin ? 'var(--bg)' : 'var(--accent)';
-  document.getElementById('tab-signup').style.color      = isLogin ? 'var(--text3)' : '#fff';
-  document.getElementById('form-login').style.display    = isLogin ? 'block' : 'none';
-  document.getElementById('form-signup').style.display   = isLogin ? 'none'  : 'block';
-}
-
-function switchToStep1() {
-  clearInterval(codeTimerInterval);
-  _verifyCode = '';
-  document.getElementById('signup-step1').style.display = 'block';
-  document.getElementById('signup-step2').style.display = 'none';
-  document.getElementById('su-step2-err').textContent   = '';
-}
-
-function startCodeTimer() {
-  clearInterval(codeTimerInterval);
-  const vBtn = document.getElementById('verify-btn');
-  if (vBtn) { vBtn.disabled = false; vBtn.style.opacity = '1'; vBtn.textContent = '가입 완료'; }
-  let secs = 300;
-  const tick = () => {
-    const el = document.getElementById('code-timer');
-    if (!el) return;
-    el.textContent = String(Math.floor(secs / 60)).padStart(2,'0') + ':' + String(secs % 60).padStart(2,'0');
-    el.style.color = secs <= 60 ? 'var(--red)' : 'var(--text3)';
-    if (secs <= 0) {
-      clearInterval(codeTimerInterval);
-      el.textContent = '만료됨'; el.style.color = 'var(--red)';
-      _verifyCode = '';
-      if (vBtn) { vBtn.disabled = true; vBtn.style.opacity = '.5'; }
-      document.getElementById('su-step2-err').textContent = '만료됐습니다. 재전송하세요.';
-    }
-    secs--;
-  };
-  tick();
-  codeTimerInterval = setInterval(tick, 1000);
-}
-
-async function doLogin() {
-  const username = document.getElementById('login-username').value.trim();
-  const password = document.getElementById('login-password').value;
-  const errEl    = document.getElementById('login-error');
-  errEl.textContent = '';
-  if (!username || !password) { errEl.textContent = '아이디와 비밀번호를 입력하세요.'; return; }
-  const btn = document.querySelector('#form-login .btn-primary');
-  btn.disabled = true; btn.textContent = '로그인 중...';
-  try {
-    const res  = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username, password}) });
-    const data = await res.json();
-    if (data.ok) { loadUserAndEnter(data.user); }
-    else { errEl.textContent = data.error || '로그인 실패'; }
-  } catch(e) { errEl.textContent = '서버에 연결할 수 없습니다.'; }
-  btn.disabled = false; btn.textContent = '로그인';
-}
-
-async function requestVerification(resend) {
-  const username  = document.getElementById('su-username').value.trim();
-  const password  = document.getElementById('su-password').value;
-  const password2 = document.getElementById('su-password2').value;
-  const email     = document.getElementById('su-email').value.trim();
-  const errEl     = document.getElementById('su-step1-err');
-  errEl.textContent = '';
-  if (!username || !password || !password2 || !email) { errEl.textContent = '모든 항목을 입력하세요.'; return; }
-  if (!/^[a-zA-Z0-9]{4,20}$/.test(username)) { errEl.textContent = '아이디는 영문·숫자 4~20자입니다.'; return; }
-  if (password.length < 8) { errEl.textContent = '비밀번호는 8자 이상이어야 합니다.'; return; }
-  if (password !== password2) { errEl.textContent = '비밀번호가 일치하지 않습니다.'; return; }
-  if (!email.includes('@') || !email.includes('.')) { errEl.textContent = '올바른 이메일 주소를 입력하세요.'; return; }
-  const btn = resend ? document.getElementById('resend-btn') : document.getElementById('send-code-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
-  try {
-    const res  = await fetch('/api/send-code', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username, email}) });
-    const data = await res.json();
-    if (!data.ok) {
-      errEl.textContent = data.error || '전송 실패';
-      if (resend) document.getElementById('su-step2-err').textContent = data.error || '오류';
-    } else {
-      _verifyCode = data.code;
-      document.getElementById('su-email-display').textContent = email;
-      document.getElementById('su-step2-err').textContent = '';
-      document.getElementById('su-code').value = '';
-      document.getElementById('signup-step1').style.display = 'none';
-      document.getElementById('signup-step2').style.display = 'block';
-      startCodeTimer();
-      setTimeout(() => { const el = document.getElementById('su-code'); if (el) el.focus(); }, 100);
-    }
-  } catch(e) { errEl.textContent = '서버에 연결할 수 없습니다.'; }
-  if (btn) { btn.disabled = false; btn.textContent = resend ? '재전송' : '인증번호 전송'; }
-}
-
-async function doSignup() {
-  const username = document.getElementById('su-username').value.trim();
-  const password = document.getElementById('su-password').value;
-  const email    = document.getElementById('su-email').value.trim();
-  const code     = document.getElementById('su-code').value.trim();
-  const errEl    = document.getElementById('su-step2-err');
-  errEl.style.color = 'var(--red)';
-  errEl.textContent = '';
-  if (code.length !== 6) { errEl.textContent = '6자리를 모두 입력하세요.'; return; }
-  if (!_verifyCode) { errEl.textContent = '인증번호를 먼저 전송해주세요.'; return; }
-  if (code !== _verifyCode) {
-    errEl.textContent = '인증번호가 틀렸습니다.';
-    document.getElementById('su-code').value = '';
-    document.getElementById('su-code').focus();
-    return;
-  }
-  const btn = document.getElementById('verify-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '가입 중...'; }
-  try {
-    const res  = await fetch('/api/signup', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username, password, email, code}) });
-    const data = await res.json();
-    if (data.ok) {
-      clearInterval(codeTimerInterval); _verifyCode = '';
-      showToast('회원가입 완료! 환영합니다 🎉', 'success');
-      loadUserAndEnter(data.user);
-    } else {
-      errEl.textContent = data.error || '가입 실패';
-      document.getElementById('su-code').value = '';
-    }
-  } catch(e) { errEl.textContent = '서버에 연결할 수 없습니다.'; }
-  if (btn) { btn.disabled = false; btn.textContent = '가입 완료'; }
-}
 
 function loadUserAndEnter(u) {
   state.loggedIn = true; state.isDemo = false;
@@ -804,14 +631,14 @@ function loadUserAndEnter(u) {
 }
 
 async function handleLogout() {
-  clearInterval(codeTimerInterval); _verifyCode = '';
+  
   try { await fetch('/auth/logout', {method:'POST'}); } catch(e) {}
   state.loggedIn = false; state.isDemo = false;
   document.getElementById('login-page').style.display = 'flex';
   document.getElementById('app').style.display        = 'none';
   document.getElementById('chat-toggle').style.display = 'none';
   document.getElementById('chat-panel').classList.remove('open');
-  ['login-username','login-password','su-username','su-password','su-password2','su-email'].forEach(id => {
+  ['login-username','login-password','su-username','su-password','su-password2'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   switchToStep1(); switchAuthTab('login');
@@ -2014,6 +1841,69 @@ async function adminReset(uid, name) {
   const data = await res.json();
   if (data.ok) { showToast(`${name} 초기화 완료`, 'success'); loadAdminUsers(); }
   else showToast(data.error || '실패', 'error');
+}
+/*AUTH*/
+
+function switchAuthTab(tab) {
+  const isLogin = tab === 'login';
+  document.getElementById('tab-login').style.background  = isLogin ? 'var(--accent)' : 'var(--bg)';
+  document.getElementById('tab-login').style.color       = isLogin ? '#fff' : 'var(--text3)';
+  document.getElementById('tab-signup').style.background = isLogin ? 'var(--bg)' : 'var(--accent)';
+  document.getElementById('tab-signup').style.color      = isLogin ? 'var(--text3)' : '#fff';
+  document.getElementById('form-login').style.display    = isLogin ? 'block' : 'none';
+  document.getElementById('form-signup').style.display   = isLogin ? 'none'  : 'block';
+}
+
+/* ── 로그인 ── */
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl    = document.getElementById('login-error');
+  errEl.textContent = '';
+  if (!username || !password) { errEl.textContent = '아이디와 비밀번호를 입력하세요.'; return; }
+  const btn = document.querySelector('#form-login .btn-primary');
+  btn.disabled = true; btn.textContent = '로그인 중...';
+  try {
+    const res  = await fetch('/api/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password}),
+    });
+    const data = await res.json();
+    if (data.ok) { loadUserAndEnter(data.user); }
+    else { errEl.textContent = data.error || '로그인 실패'; }
+  } catch(e) { errEl.textContent = '서버에 연결할 수 없습니다.'; }
+  btn.disabled = false; btn.textContent = '로그인';
+}
+
+/* ── 회원가입 (아이디 + 비밀번호만) ── */
+async function doSignup() {
+  const username  = document.getElementById('su-username').value.trim();
+  const password  = document.getElementById('su-password').value;
+  const password2 = document.getElementById('su-password2').value;
+  const errEl     = document.getElementById('su-err');
+  errEl.textContent = '';
+
+  if (!username || !password || !password2) { errEl.textContent = '모든 항목을 입력하세요.'; return; }
+  if (!/^[a-zA-Z0-9]{4,20}$/.test(username)) { errEl.textContent = '아이디는 영문·숫자 4~20자입니다.'; return; }
+  if (password.length < 8) { errEl.textContent = '비밀번호는 8자 이상이어야 합니다.'; return; }
+  if (password !== password2) { errEl.textContent = '비밀번호가 일치하지 않습니다.'; return; }
+
+  const btn = document.getElementById('signup-btn');
+  btn.disabled = true; btn.textContent = '처리 중...';
+  try {
+    const res  = await fetch('/api/signup', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password}),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('회원가입 완료! 환영합니다 🎉', 'success');
+      loadUserAndEnter(data.user);
+    } else {
+      errEl.textContent = data.error || '가입 실패';
+    }
+  } catch(e) { errEl.textContent = '서버에 연결할 수 없습니다.'; }
+  btn.disabled = false; btn.textContent = '회원가입';
 }
 
 </script>
