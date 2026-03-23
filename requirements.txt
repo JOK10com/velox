@@ -1,0 +1,4 @@
+flask>=3.0.0
+sqlmodel>=0.0.18
+gunicorn>=21.2.0
+requests>=2.31.0
