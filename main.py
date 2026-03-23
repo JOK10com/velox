@@ -11,6 +11,13 @@ from typing import Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# .env 파일 로드 (로컬 개발용 — Render에서는 환경변수로 자동 주입)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from flask import Flask, render_template, request, jsonify, session
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
