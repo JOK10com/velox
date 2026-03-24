@@ -238,7 +238,15 @@ def get_current_user() -> Optional[User]:
     if not uid:
         return None
     with Session(engine) as db:
-        return db.get(User, uid)
+        u = db.get(User, uid)
+        if not u:
+            return None
+        # Session 닫히기 전에 모든 필드를 로드해서 detach 방지
+        db.refresh(u)
+        return u
+
+def get_current_user_id() -> Optional[int]:
+    return session.get("user_id")
 
 
 def require_admin(f):
@@ -263,10 +271,15 @@ def index():
 
 @app.route("/api/me")
 def api_me():
-    user = get_current_user()
-    if not user:
+    uid = session.get("user_id")
+    if not uid:
         return jsonify({"loggedIn": False})
-    return jsonify({"loggedIn": True, "user": user_to_dict(user)})
+    with Session(engine) as db:
+        u = db.get(User, uid)
+        if not u:
+            return jsonify({"loggedIn": False})
+        user_data = user_to_dict(u)
+    return jsonify({"loggedIn": True, "user": user_data})
 
 
 @app.route("/api/login", methods=["POST"])
@@ -278,10 +291,11 @@ def api_login():
         return jsonify({"ok": False, "error": "아이디와 비밀번호를 입력하세요."})
     with Session(engine) as db:
         user = db.exec(select(User).where(User.username == username)).first()
-    if not user or user.password_hash != hash_pw(password):
-        return jsonify({"ok": False, "error": "아이디 또는 비밀번호가 올바르지 않습니다."})
-    session["user_id"] = user.id
-    return jsonify({"ok": True, "user": user_to_dict(user)})
+        if not user or user.password_hash != hash_pw(password):
+            return jsonify({"ok": False, "error": "아이디 또는 비밀번호가 올바르지 않습니다."})
+        session["user_id"] = user.id
+        user_data = user_to_dict(user)   # Session 안에서 직렬화
+    return jsonify({"ok": True, "user": user_data})
 
 
 @app.route("/api/signup", methods=["POST"])
@@ -322,9 +336,10 @@ def api_signup():
         db.commit()
         db.refresh(user)
         session["user_id"] = user.id
+        user_data = user_to_dict(user)   # Session 안에서 직렬화
 
     print(f"[가입완료] {username} / admin={is_admin}")
-    return jsonify({"ok": True, "user": user_to_dict(user)})
+    return jsonify({"ok": True, "user": user_data})
 
 
 @app.route("/auth/logout", methods=["POST"])
@@ -464,9 +479,12 @@ def api_trade():
         db.add(u)
         db.commit()
 
+        # ★ Session 닫히기 전에 필요한 값 미리 저장
+        final_balance = u.balance
+
     return jsonify({
         "ok":        True,
-        "balance":   u.balance,
+        "balance":   final_balance,
         "portfolio": portfolio,
         "costBasis": cost_basis,
         "history":   history,
@@ -532,10 +550,14 @@ def api_transfer():
         db.add(recipient)
         db.commit()
 
+        # ★ Session 닫히기 전에 값 저장
+        final_balance          = sender.balance
+        final_today_transferred = sender.today_transferred
+
     return jsonify({
         "ok":               True,
-        "balance":          sender.balance,
-        "todayTransferred": sender.today_transferred,
+        "balance":          final_balance,
+        "todayTransferred": final_today_transferred,
         "transfers":        s_transfers,
     })
 
@@ -547,12 +569,13 @@ def api_transfer():
 def admin_get_users():
     with Session(engine) as db:
         users = db.exec(select(User)).all()
-    return jsonify({"ok": True, "users": [
-        {"id": u.id, "username": u.username, "isAdmin": u.is_admin,
-         "balance": u.balance, "tierIdx": u.tier_idx,
-         "createdAt": u.created_at.strftime("%Y-%m-%d %H:%M")}
-        for u in users
-    ]})
+        user_list = [
+            {"id": u.id, "username": u.username, "isAdmin": u.is_admin,
+             "balance": u.balance, "tierIdx": u.tier_idx,
+             "createdAt": u.created_at.strftime("%Y-%m-%d %H:%M")}
+            for u in users
+        ]
+    return jsonify({"ok": True, "users": user_list})
 
 
 @app.route("/api/admin/user/<int:uid>/balance", methods=["POST"])
@@ -570,7 +593,8 @@ def admin_set_balance(uid: int):
         elif mode == "add":      u.balance += float(amount)
         elif mode == "subtract": u.balance  = max(0, u.balance - float(amount))
         db.add(u); db.commit()
-    return jsonify({"ok": True, "balance": u.balance})
+        final_balance = u.balance
+    return jsonify({"ok": True, "balance": final_balance})
 
 
 @app.route("/api/admin/user/<int:uid>/tier", methods=["POST"])
