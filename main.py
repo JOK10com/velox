@@ -19,12 +19,21 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "velox-dev-secret-key-change-in-prod")
 
 # ── DB 경로 설정 ──────────────────────────────────────
-# 로컬: main.py 옆에 database.db 생성
-# Render: /data/database.db (Disk 마운트 필요)
+# 환경변수 DB_PATH가 없으면 그냥 현재 폴더에 database.db 생성
+# Render Disk 사용 시: DB_PATH=/data/database.db 환경변수 설정
 DB_PATH = os.environ.get("DB_PATH", "database.db")
-_db_dir = os.path.dirname(os.path.abspath(DB_PATH)) if os.path.dirname(DB_PATH) else None
-if _db_dir and not os.path.exists(_db_dir):
-    os.makedirs(_db_dir, exist_ok=True)
+
+# 명시적으로 /data/... 같은 절대경로일 때만 폴더 생성 시도
+if os.path.isabs(DB_PATH):
+    _db_dir = os.path.dirname(DB_PATH)
+    if _db_dir and not os.path.exists(_db_dir):
+        try:
+            os.makedirs(_db_dir, exist_ok=True)
+            print(f"[VELOX] 폴더 생성: {_db_dir}")
+        except PermissionError:
+            print(f"[VELOX] 경고: {_db_dir} 폴더 생성 권한 없음 → database.db 사용")
+            DB_PATH = "database.db"
+
 print(f"[VELOX] DB 경로: {DB_PATH}")
 
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
