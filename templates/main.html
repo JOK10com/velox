@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7799486292050157" crossorigin="anonymous"></script>
 <style>
 :root {
   --bg:#ffffff; --surface:#f7f7f5; --surface2:#efefec;
@@ -132,11 +133,10 @@ nav{flex:1;padding:10px 0;overflow-y:auto;}
 .modal-close{float:right;font-size:1.1rem;color:var(--text3);cursor:pointer;}
 
 /* ── Ad Banner ── */
-.ad-banner{background:linear-gradient(135deg,#1a1a18 0%,#2d2d28 100%);border-radius:var(--radius);padding:14px 22px;display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;cursor:pointer;transition:opacity .2s;border:1px solid rgba(201,168,76,.25);}
-.ad-banner:hover{opacity:.92;}
+.ad-banner{margin-bottom:24px;border-radius:var(--radius);overflow:hidden;min-height:90px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;}
 .ad-label{font-size:.62rem;color:rgba(255,255,255,.3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px;}
 .ad-content{font-size:.9rem;color:rgba(255,255,255,.85);font-weight:500;}
-.ad-reward{font-family:var(--font-mono);font-size:.85rem;color:var(--gold2);font-weight:600;background:rgba(201,168,76,.12);padding:6px 14px;border-radius:20px;border:1px solid rgba(201,168,76,.25);}
+
 
 /* ── Login Page ── */
 #login-page{min-height:100vh;background:var(--bg);display:flex;align-items:center;justify-content:center;}
@@ -480,12 +480,7 @@ const LOAN_PRODUCTS = [
   { id:'invest',name:'투자 목적 대출',  rate:'0.8%/시간', pctOfLimit:1.00, desc:'한도 전액, 시간당 이자 0.8%' },
 ];
 
-const ADS = [
-  { text:'🚀 AND비디아 GPU 최신 모델 출시! 지금 주문하세요', sponsor:'AND비디아 공식' },
-  { text:'💳 VELOX 프리미엄 카드 — 거래 수수료 0%',          sponsor:'VELOX 파트너' },
-  { text:'📱 바이트코인 지갑 앱 출시 — 무료 다운로드',         sponsor:'바이트코인 재단' },
-  { text:'⚡ 초고속 체결 보장 — 골드 이상 유저 전용',           sponsor:'VELOX PRO' },
-];
+
 
 /* ════════════════════════════════════════
    STATE
@@ -507,7 +502,7 @@ ALL_ASSETS.forEach(a => {
   a.tradeImpact = 0;   // 누적 거래 충격 (양수=매수압, 음수=매도압)
 });
 
-let adIdx = 0;
+
 
 /* ════════════════════════════════════════
    PRICE ENGINE — 서버 동기화 (모든 유저 동일 가격)
@@ -719,16 +714,15 @@ function updateSidebar() {
 
 /* ── Ad Banner ── */
 function adBannerHTML() {
-  const ad = ADS[adIdx % ADS.length];
-  return `<div class="ad-banner" onclick="clickAd()">
-    <div><div class="ad-label">광고 · ${ad.sponsor}</div><div class="ad-content">${ad.text}</div></div>
-    <div class="ad-reward">+₩20,000 클릭 보상</div>
+  return `<div class="ad-banner">
+    <ins class="adsbygoogle"
+         style="display:block;width:100%;min-height:90px;"
+         data-ad-client="ca-pub-7799486292050157"
+         data-ad-slot="auto"
+         data-ad-format="auto"
+         data-full-width-responsive="true"></ins>
+    <script>(adsbygoogle = window.adsbygoogle || []).push({});<\/script>
   </div>`;
-}
-function clickAd() {
-  adIdx++; state.user.balance += 20_000; updateSidebar();
-  showToast('광고 클릭 보상 +₩20,000을 받았습니다! 🎉', 'success');
-  if (state.currentPage === 'dashboard') updateDashboardStats();
 }
 
 /* ════════════════════════════════════════
