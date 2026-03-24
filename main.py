@@ -12,28 +12,38 @@ from typing import Optional
 
 from flask import Flask, render_template, request, jsonify, session
 from sqlmodel import Field, Session, SQLModel, create_engine, select
-import sqlite3 as _sqlite3
 
 # ── 앱 설정 ──────────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "velox-dev-secret-key-change-in-prod")
 
-# ── DB 경로 설정 ──────────────────────────────────────
-DB_PATH = os.environ.get("DB_PATH", "database.db")
+# ── DB 연결 설정 (Supabase PostgreSQL) ───────────────
+# Render 환경변수에 DATABASE_URL 을 설정하세요.
+# 형식: postgresql://postgres.[프로젝트ID]:[비밀번호]@aws-0-[리전].pooler.supabase.com:6543/postgres
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-# /data/... 같은 절대경로일 때만 폴더 생성 시도
-# 권한 없으면 그냥 database.db로 대체
-if os.path.isabs(DB_PATH):
-    _db_dir = os.path.dirname(DB_PATH)
-    if _db_dir and not os.path.exists(_db_dir):
-        try:
-            os.makedirs(_db_dir, exist_ok=True)
-        except (PermissionError, OSError):
-            DB_PATH = "database.db"
+if not DATABASE_URL:
+    raise RuntimeError(
+        "[VELOX] DATABASE_URL 환경변수가 설정되지 않았습니다.\n"
+        "Render 대시보드 → Environment → DATABASE_URL 을 Supabase 연결 문자열로 설정하세요."
+    )
 
-print(f"[VELOX] DB 경로: {DB_PATH}")
+# SQLAlchemy 는 'postgres://' 를 인식 못하므로 'postgresql://' 로 교체
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
+print("[VELOX] DB 연결 중 (Supabase PostgreSQL)...")
+
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,          # 연결 유효성 자동 확인
+    pool_recycle=300,            # 5분마다 연결 재사용 (Supabase idle timeout 대응)
+    connect_args={
+        "connect_timeout": 10,   # 연결 타임아웃 10초
+        "sslmode": "require",    # Supabase 는 SSL 필수
+    },
+)
 
 # ── 관리자 설정 ───────────────────────────────────────
 ADMIN_USERNAME  = "alwaystwosteps"
@@ -184,28 +194,7 @@ class User(SQLModel, table=True):
 announcements: list = []
 
 
-# ── DB 초기화 + 마이그레이션 ─────────────────────────
-def _migrate():
-    try:
-        con = _sqlite3.connect(DB_PATH)
-        cur = con.cursor()
-        cur.execute("PRAGMA table_info(user)")
-        existing = [row[1] for row in cur.fetchall()]
-        new_cols = [
-            ("is_admin",        "INTEGER NOT NULL DEFAULT 0"),
-            ("cost_basis_json", "TEXT    NOT NULL DEFAULT '{}'"),
-        ]
-        for col, typedef in new_cols:
-            if col not in existing:
-                cur.execute(f"ALTER TABLE user ADD COLUMN {col} {typedef}")
-                print(f"[VELOX] 컬럼 추가: {col}")
-        con.commit()
-        con.close()
-    except Exception as e:
-        print(f"[VELOX] 마이그레이션 오류: {e}")
-
 SQLModel.metadata.create_all(engine)
-_migrate()
 print("[VELOX] DB 준비 완료")
 
 
