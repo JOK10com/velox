@@ -19,19 +19,16 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "velox-dev-secret-key-change-in-prod")
 
 # ── DB 경로 설정 ──────────────────────────────────────
-# 환경변수 DB_PATH가 없으면 그냥 현재 폴더에 database.db 생성
-# Render Disk 사용 시: DB_PATH=/data/database.db 환경변수 설정
 DB_PATH = os.environ.get("DB_PATH", "database.db")
 
-# 명시적으로 /data/... 같은 절대경로일 때만 폴더 생성 시도
+# /data/... 같은 절대경로일 때만 폴더 생성 시도
+# 권한 없으면 그냥 database.db로 대체
 if os.path.isabs(DB_PATH):
     _db_dir = os.path.dirname(DB_PATH)
     if _db_dir and not os.path.exists(_db_dir):
         try:
             os.makedirs(_db_dir, exist_ok=True)
-            print(f"[VELOX] 폴더 생성: {_db_dir}")
-        except PermissionError:
-            print(f"[VELOX] 경고: {_db_dir} 폴더 생성 권한 없음 → database.db 사용")
+        except (PermissionError, OSError):
             DB_PATH = "database.db"
 
 print(f"[VELOX] DB 경로: {DB_PATH}")
@@ -238,15 +235,7 @@ def get_current_user() -> Optional[User]:
     if not uid:
         return None
     with Session(engine) as db:
-        u = db.get(User, uid)
-        if not u:
-            return None
-        # Session 닫히기 전에 모든 필드를 로드해서 detach 방지
-        db.refresh(u)
-        return u
-
-def get_current_user_id() -> Optional[int]:
-    return session.get("user_id")
+        return db.get(User, uid)
 
 
 def require_admin(f):
@@ -294,7 +283,7 @@ def api_login():
         if not user or user.password_hash != hash_pw(password):
             return jsonify({"ok": False, "error": "아이디 또는 비밀번호가 올바르지 않습니다."})
         session["user_id"] = user.id
-        user_data = user_to_dict(user)   # Session 안에서 직렬화
+        user_data = user_to_dict(user)
     return jsonify({"ok": True, "user": user_data})
 
 
@@ -336,7 +325,7 @@ def api_signup():
         db.commit()
         db.refresh(user)
         session["user_id"] = user.id
-        user_data = user_to_dict(user)   # Session 안에서 직렬화
+        user_data = user_to_dict(user)
 
     print(f"[가입완료] {username} / admin={is_admin}")
     return jsonify({"ok": True, "user": user_data})
@@ -478,8 +467,6 @@ def api_trade():
         u.updated_at      = datetime.now(timezone.utc)
         db.add(u)
         db.commit()
-
-        # ★ Session 닫히기 전에 필요한 값 미리 저장
         final_balance = u.balance
 
     return jsonify({
@@ -549,15 +536,13 @@ def api_transfer():
         db.add(sender)
         db.add(recipient)
         db.commit()
-
-        # ★ Session 닫히기 전에 값 저장
-        final_balance          = sender.balance
-        final_today_transferred = sender.today_transferred
+        final_balance = sender.balance
+        final_transferred = sender.today_transferred
 
     return jsonify({
         "ok":               True,
         "balance":          final_balance,
-        "todayTransferred": final_today_transferred,
+        "todayTransferred": final_transferred,
         "transfers":        s_transfers,
     })
 
