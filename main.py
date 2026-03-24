@@ -157,7 +157,6 @@ def _price_engine_loop():
 
 
 _engine_thread = threading.Thread(target=_price_engine_loop, daemon=True)
-_engine_thread.start()
 print("[VELOX] 가격 엔진 시작")
 
 
@@ -365,10 +364,22 @@ def api_save():
 
 @app.route("/api/prices")
 def api_get_prices():
-    """모든 유저가 동일한 서버 가격을 조회"""
+    global _last_stock_tick, _last_coin_tick
+
+    now = time.time()
+
+    # 🔥 여기 추가 (핵심)
+    if now - _last_coin_tick >= 5:
+        _tick_coins()
+
+    if now - _last_stock_tick >= 10:
+        _tick_stocks()
+
+    # 기존 코드 그대로
     with _price_lock:
         snap_prices  = dict(prices)
         snap_history = {k: list(v) for k, v in price_history.items()}
+
     return jsonify({
         "ok":      True,
         "prices":  snap_prices,
