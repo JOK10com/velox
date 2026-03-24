@@ -1,4 +1,3 @@
-flask>=3.0.0
-sqlmodel>=0.0.18
-gunicorn>=21.2.0
-python-dotenv>=1.0.0
+flask
+sqlmodel
+psycopg2-binary
