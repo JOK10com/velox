@@ -3,6 +3,10 @@ from __future__ import annotations
 import os
 import json
 import hashlib
+import time
+import threading
+import random
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -26,9 +30,129 @@ print(f"[VELOX] DB 경로: {DB_PATH}")
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 
 # ── 관리자 설정 ───────────────────────────────────────
-ADMIN_USERNAME    = "alwaystwosteps"
+ADMIN_USERNAME  = "alwaystwosteps"
 ADMIN_BTC_QTY   = int(40_000_000 * 0.001)   # 바이트코인 0.1% = 40,000개
 ADMIN_BTC_PRICE = 50_000_000                  # 초기 원가 기준
+
+
+# ══════════════════════════════════════════════════════
+#  서버 사이드 가격 엔진 (모든 유저 공유)
+# ══════════════════════════════════════════════════════
+
+INITIAL_PRICES = {
+    'os':  250000,
+    'mr':  200000,
+    'nv':  500000,
+    'bn':  300000,
+    'btc': 50_000_000,
+    'bth': 7_000_000,
+    'shi': 2_000,
+    'dge': 20_000,
+    'jio': 100000,
+}
+
+ASSET_SHARES = {
+    'os':  2_680_000_000,
+    'mr':  425_000_000,
+    'nv':  13_400_000_000,
+    'bn':  19_166_666_667,
+    'btc': 40_000_000,
+    'bth': 95_714_286,
+    'shi': 11_250_000_000,
+    'dge': 1_650_000_000,
+    'jio': 999_999_999,
+}
+
+ASSET_TYPES = {
+    'os':'stock','mr':'stock','nv':'stock','bn':'stock',
+    'btc':'coin','bth':'coin','shi':'coin','dge':'coin',
+    'jio':'index',
+}
+
+ASSET_NAMES = {
+    'os':'오성전자','mr':'미래자동차','nv':'AND비디아','bn':'bAnana',
+    'btc':'바이트코인','bth':'Both코인','shi':'시발이누','dge':'닷지코인','jio':'JIODAQ',
+}
+
+SMALL_COINS = {'shi','dge','bth'}
+
+STOCK_IDS = ['os','mr','nv','bn','jio']
+COIN_IDS  = ['btc','bth','shi','dge']
+
+# 전역 가격 상태 (모든 유저 공유)
+_price_lock = threading.Lock()
+prices: dict[str, int] = dict(INITIAL_PRICES)
+price_history: dict[str, list] = {k: [v] for k, v in INITIAL_PRICES.items()}
+trade_impact: dict[str, float] = {k: 0.0 for k in INITIAL_PRICES}
+_last_stock_tick = 0.0
+_last_coin_tick  = 0.0
+
+
+def _tick_stocks():
+    global _last_stock_tick
+    with _price_lock:
+        for aid in STOCK_IDS:
+            pct = (random.random() - 0.49) * 0.025
+            if random.random() < 0.01:
+                if random.random() < 0.5:
+                    pct += 0.10 + random.random() * 0.30
+                else:
+                    pct -= 0.10 + random.random() * 0.30
+            if trade_impact.get(aid):
+                pct += trade_impact[aid]
+                trade_impact[aid] *= 0.4
+                if abs(trade_impact[aid]) < 0.0001:
+                    trade_impact[aid] = 0.0
+            pct = max(-0.40, pct)
+            prices[aid] = max(1, round(prices[aid] * (1 + pct)))
+            price_history[aid].append(prices[aid])
+            if len(price_history[aid]) > 60:
+                price_history[aid].pop(0)
+        _last_stock_tick = time.time()
+
+
+def _tick_coins():
+    global _last_coin_tick
+    with _price_lock:
+        for aid in COIN_IDS:
+            pct = (random.random() - 0.49) * 0.06
+            if random.random() < 0.02:
+                is_small = aid in SMALL_COINS
+                if random.random() < 0.5:
+                    pct += (0.20 + random.random() * 0.60) if is_small else (0.10 + random.random() * 0.30)
+                else:
+                    pct -= (0.20 + random.random() * 0.40) if is_small else (0.10 + random.random() * 0.25)
+            if trade_impact.get(aid):
+                pct += trade_impact[aid]
+                trade_impact[aid] *= 0.25
+                if abs(trade_impact[aid]) < 0.0001:
+                    trade_impact[aid] = 0.0
+            is_small = aid in SMALL_COINS
+            pct = max(-0.60 if is_small else -0.35, pct)
+            prices[aid] = max(1, round(prices[aid] * (1 + pct)))
+            price_history[aid].append(prices[aid])
+            if len(price_history[aid]) > 60:
+                price_history[aid].pop(0)
+        _last_coin_tick = time.time()
+
+
+def _price_engine_loop():
+    """백그라운드 쓰레드: 주식 10초, 코인 5초마다 가격 갱신"""
+    global _last_stock_tick, _last_coin_tick
+    _last_stock_tick = time.time()
+    _last_coin_tick  = time.time()
+    while True:
+        now = time.time()
+        if now - _last_coin_tick >= 5:
+            _tick_coins()
+        if now - _last_stock_tick >= 10:
+            _tick_stocks()
+        time.sleep(1)
+
+
+_engine_thread = threading.Thread(target=_price_engine_loop, daemon=True)
+_engine_thread.start()
+print("[VELOX] 가격 엔진 시작")
 
 
 # ── 모델 ──────────────────────────────────────────────
@@ -57,7 +181,6 @@ announcements: list = []
 
 # ── DB 초기화 + 마이그레이션 ─────────────────────────
 def _migrate():
-    """기존 DB에 새 컬럼 자동 추가"""
     try:
         con = _sqlite3.connect(DB_PATH)
         cur = con.cursor()
@@ -169,13 +292,10 @@ def api_signup():
         if db.exec(select(User).where(User.username == username)).first():
             return jsonify({"ok": False, "error": "이미 사용 중인 아이디입니다."})
 
-        # 🔥 관리자 판별
-        is_admin = (username == ADMIN_USERNAME)
-
+        is_admin   = (username == ADMIN_USERNAME)
         portfolio  = {}
         cost_basis = {}
 
-        # 🔥 관리자면 BTC 0.1% 지급
         if is_admin:
             portfolio["btc"]  = ADMIN_BTC_QTY
             cost_basis["btc"] = ADMIN_BTC_QTY * ADMIN_BTC_PRICE
@@ -189,7 +309,6 @@ def api_signup():
             portfolio_json  = json.dumps(portfolio),
             cost_basis_json = json.dumps(cost_basis),
         )
-
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -197,6 +316,7 @@ def api_signup():
 
     print(f"[가입완료] {username} / admin={is_admin}")
     return jsonify({"ok": True, "user": user_to_dict(user)})
+
 
 @app.route("/auth/logout", methods=["POST"])
 def logout():
@@ -226,6 +346,189 @@ def api_save():
         db.add(u)
         db.commit()
     return jsonify({"ok": True})
+
+
+# ── 가격 동기화 API ────────────────────────────────────
+
+@app.route("/api/prices")
+def api_get_prices():
+    """모든 유저가 동일한 서버 가격을 조회"""
+    with _price_lock:
+        snap_prices  = dict(prices)
+        snap_history = {k: list(v) for k, v in price_history.items()}
+    return jsonify({
+        "ok":      True,
+        "prices":  snap_prices,
+        "history": snap_history,
+        "ts":      int(time.time() * 1000),
+    })
+
+
+# ── 거래 API (서버 가격 기준) ─────────────────────────
+
+@app.route("/api/trade", methods=["POST"])
+def api_trade():
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "로그인 필요"}), 401
+
+    data   = request.get_json(silent=True) or {}
+    aid    = data.get("assetId", "")
+    action = data.get("action", "")
+    qty    = int(data.get("qty", 0))
+
+    if aid not in prices:
+        return jsonify({"ok": False, "error": "알 수 없는 종목"})
+    if action not in ("buy", "sell"):
+        return jsonify({"ok": False, "error": "action 오류"})
+    if qty <= 0:
+        return jsonify({"ok": False, "error": "수량 오류"})
+
+    with Session(engine) as db:
+        u = db.get(User, user.id)
+        if not u:
+            return jsonify({"ok": False, "error": "유저 없음"}), 404
+
+        portfolio  = json.loads(u.portfolio_json  or "{}")
+        cost_basis = json.loads(u.cost_basis_json or "{}")
+
+        with _price_lock:
+            current_price = prices[aid]
+            shares        = ASSET_SHARES.get(aid, 1_000_000_000)
+            mkt_cap       = current_price * shares
+            trade_value   = qty * current_price
+            raw_ratio     = trade_value / mkt_cap if mkt_cap > 0 else 0
+
+            asset_type = ASSET_TYPES.get(aid, "stock")
+            if asset_type == "coin":
+                liq = 8 if shares < 1_000_000_000 else 3
+            else:
+                liq = 5 if shares < 500_000_000 else 2
+
+            impact_pct  = math.sqrt(raw_ratio) * liq * (1 if action == "buy" else -1)
+            is_small    = aid in SMALL_COINS
+            max_drop    = -0.60 if is_small else (-0.35 if asset_type == "coin" else -0.40)
+            clamped     = max(max_drop, min(0.15, impact_pct))
+            old_price   = prices[aid]
+            prices[aid] = max(1, round(old_price * (1 + clamped)))
+            trade_impact[aid] = trade_impact.get(aid, 0.0) + impact_pct * 0.4
+            price_history[aid].append(prices[aid])
+            if len(price_history[aid]) > 60:
+                price_history[aid].pop(0)
+            exec_price = old_price
+
+        total = qty * exec_price
+
+        if action == "buy":
+            if u.balance < total:
+                # 가격 충격 롤백
+                with _price_lock:
+                    prices[aid] = old_price
+                    trade_impact[aid] -= impact_pct * 0.4
+                return jsonify({"ok": False, "error": "잔액이 부족합니다"})
+            u.balance -= total
+            portfolio[aid]  = (portfolio.get(aid) or 0) + qty
+            cost_basis[aid] = (cost_basis.get(aid) or 0) + total
+        else:
+            holding = portfolio.get(aid, 0)
+            if holding < qty:
+                with _price_lock:
+                    prices[aid] = old_price
+                    trade_impact[aid] -= impact_pct * 0.4
+                return jsonify({"ok": False, "error": "보유량이 부족합니다"})
+            u.balance += total
+            sell_ratio      = qty / holding
+            cost_basis[aid] = (cost_basis.get(aid) or 0) * (1 - sell_ratio)
+            portfolio[aid]  = holding - qty
+            if portfolio[aid] <= 0:
+                portfolio[aid]  = 0
+                cost_basis[aid] = 0
+
+        history = json.loads(u.history_json or "[]")
+        history.append({"name": ASSET_NAMES.get(aid, aid), "type": action, "amount": total})
+        history = history[-100:]
+
+        u.portfolio_json  = json.dumps(portfolio)
+        u.cost_basis_json = json.dumps(cost_basis)
+        u.history_json    = json.dumps(history)
+        u.updated_at      = datetime.now(timezone.utc)
+        db.add(u)
+        db.commit()
+
+    return jsonify({
+        "ok":        True,
+        "balance":   u.balance,
+        "portfolio": portfolio,
+        "costBasis": cost_basis,
+        "history":   history,
+        "newPrice":  prices[aid],
+        "execPrice": exec_price,
+        "impactPct": round(clamped * 100, 2),
+    })
+
+
+# ── 송금 API (서버 검증) ───────────────────────────────
+
+@app.route("/api/transfer", methods=["POST"])
+def api_transfer():
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "로그인 필요"}), 401
+
+    data   = request.get_json(silent=True) or {}
+    to_id  = data.get("to", "").strip()
+    amount = float(data.get("amount", 0))
+    memo   = data.get("memo", "")
+
+    if not to_id:
+        return jsonify({"ok": False, "error": "받는 사람 ID를 입력하세요"})
+    if amount <= 0:
+        return jsonify({"ok": False, "error": "금액을 입력하세요"})
+
+    TIER_TRANSFER_LIMITS = {
+        0: 10_000_000, 1: 50_000_000, 2: 100_000_000,
+        3: 1_000_000_000, 4: float('inf'),
+    }
+
+    with Session(engine) as db:
+        sender = db.get(User, user.id)
+        if not sender:
+            return jsonify({"ok": False, "error": "유저 없음"}), 404
+
+        limit = TIER_TRANSFER_LIMITS.get(sender.tier_idx, 10_000_000)
+        if limit != float('inf') and sender.today_transferred + amount > limit:
+            return jsonify({"ok": False, "error": "일일 한도 초과"})
+
+        if sender.balance < amount:
+            return jsonify({"ok": False, "error": "잔액이 부족합니다"})
+
+        recipient = db.exec(select(User).where(User.username == to_id)).first()
+        if not recipient:
+            return jsonify({"ok": False, "error": "존재하지 않는 유저입니다"})
+        if recipient.id == sender.id:
+            return jsonify({"ok": False, "error": "자신에게 송금할 수 없습니다"})
+
+        sender.balance        -= amount
+        sender.today_transferred += amount
+        recipient.balance     += amount
+
+        now_str     = datetime.now(timezone.utc).strftime("%H:%M")
+        s_transfers = json.loads(sender.transfers_json or "[]")
+        s_transfers.insert(0, {"to": to_id, "amount": amount, "time": now_str, "memo": memo})
+        sender.transfers_json = json.dumps(s_transfers[:50])
+
+        sender.updated_at    = datetime.now(timezone.utc)
+        recipient.updated_at = datetime.now(timezone.utc)
+        db.add(sender)
+        db.add(recipient)
+        db.commit()
+
+    return jsonify({
+        "ok":               True,
+        "balance":          sender.balance,
+        "todayTransferred": sender.today_transferred,
+        "transfers":        s_transfers,
+    })
 
 
 # ── 관리자 API ─────────────────────────────────────────
@@ -316,42 +619,31 @@ def get_announcements():
     return jsonify({"ok": True, "list": announcements})
 
 
-# ── 관리자 지분 지급 API (관리자 전용) ─────────────────
 @app.route("/api/admin/grant-btc", methods=["POST"])
 @require_admin
 def admin_grant_btc():
     user = get_current_user()
-
-    # ✅ 1. None 체크
     if not user:
         return jsonify({"ok": False, "error": "로그인 필요"}), 401
 
     with Session(engine) as db:
         u = db.get(User, user.id)
-
-        # ✅ 2. DB 유저 체크
         if not u:
             return jsonify({"ok": False, "error": "유저 없음"}), 404
 
-        # ✅ 3. JSON 안전 처리
         try:
-            portfolio = json.loads(u.portfolio_json or "{}")
+            portfolio  = json.loads(u.portfolio_json  or "{}")
             cost_basis = json.loads(u.cost_basis_json or "{}")
         except Exception:
-            portfolio = {}
-            cost_basis = {}
+            portfolio = {}; cost_basis = {}
 
-        # ✅ 4. 중복 지급 방지
         if "btc" in portfolio:
             return jsonify({"ok": False, "error": "이미 지급됨"})
 
-        # ✅ 5. 지급
-        portfolio["btc"] = ADMIN_BTC_QTY
+        portfolio["btc"]  = ADMIN_BTC_QTY
         cost_basis["btc"] = ADMIN_BTC_QTY * ADMIN_BTC_PRICE
-
-        u.portfolio_json = json.dumps(portfolio)
+        u.portfolio_json  = json.dumps(portfolio)
         u.cost_basis_json = json.dumps(cost_basis)
-
         db.add(u)
         db.commit()
 
