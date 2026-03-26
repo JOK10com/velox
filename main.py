@@ -535,12 +535,42 @@ def api_transfer():
 def admin_get_users():
     with Session(engine) as db:
         users = db.exec(select(User)).all()
-        user_list = [
-            {"id": u.id, "username": u.username, "isAdmin": u.is_admin,
-             "balance": u.balance, "tierIdx": u.tier_idx,
-             "createdAt": u.created_at.strftime("%Y-%m-%d %H:%M")}
-            for u in users
-        ]
+        user_list = []
+        for u in users:
+            try:
+                portfolio  = json.loads(u.portfolio_json  or "{}")
+                cost_basis = json.loads(u.cost_basis_json or "{}")
+            except Exception:
+                portfolio  = {}
+                cost_basis = {}
+            portfolio_detail = []
+            for aid, qty in portfolio.items():
+                if qty <= 0:
+                    continue
+                cost      = cost_basis.get(aid, 0)
+                avg_price = round(cost / qty) if qty > 0 else 0
+                cur_price = prices.get(aid, avg_price)
+                cur_val   = cur_price * qty
+                pnl       = cur_val - cost
+                roe       = round(pnl / cost * 100, 2) if cost > 0 else 0
+                portfolio_detail.append({
+                    "id": aid, "name": ASSET_NAMES.get(aid, aid),
+                    "qty": qty, "avgPrice": avg_price,
+                    "curPrice": cur_price, "curVal": round(cur_val),
+                    "pnl": round(pnl), "roe": roe,
+                })
+            try:
+                loans = json.loads(u.loans_json or "[]")
+            except Exception:
+                loans = []
+            total_loan = sum(l.get("remaining", 0) for l in loans)
+            user_list.append({
+                "id": u.id, "username": u.username, "isAdmin": u.is_admin,
+                "balance": u.balance, "tierIdx": u.tier_idx,
+                "totalLoan": total_loan,
+                "portfolioDetail": portfolio_detail,
+                "createdAt": u.created_at.strftime("%Y-%m-%d %H:%M"),
+            })
     return jsonify({"ok": True, "users": user_list})
 
 
@@ -589,10 +619,28 @@ def admin_ban_user(uid: int):
     with Session(engine) as db:
         u = db.get(User, uid)
         if not u or u.is_admin: return jsonify({"ok": False, "error": "불가"}), 400
-        u.balance = 0;
-        u.tier_idx = 0;
-        u.loans_json = "[]"
-        db.add(u);
+        u.balance           = 0
+        u.tier_idx          = 0
+        u.portfolio_json    = "{}"
+        u.cost_basis_json   = "{}"
+        u.loans_json        = "[]"
+        u.history_json      = "[]"
+        u.transfers_json    = "[]"
+        u.today_transferred = 0.0
+        u.updated_at        = datetime.now(timezone.utc)
+        db.add(u)
+        db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/user/<int:uid>/delete", methods=["POST"])
+@require_admin
+def admin_delete_user(uid: int):
+    with Session(engine) as db:
+        u = db.get(User, uid)
+        if not u:      return jsonify({"ok": False, "error": "유저 없음"}), 404
+        if u.is_admin: return jsonify({"ok": False, "error": "관리자는 삭제 불가"}), 400
+        db.delete(u)
         db.commit()
     return jsonify({"ok": True})
 
@@ -603,15 +651,16 @@ def admin_reset_user(uid: int):
     with Session(engine) as db:
         u = db.get(User, uid)
         if not u or u.is_admin: return jsonify({"ok": False, "error": "불가"}), 400
-        u.balance = 100_000.0;
-        u.tier_idx = 0
-        u.portfolio_json = "{}";
-        u.cost_basis_json = "{}"
-        u.loans_json = "[]";
-        u.history_json = "[]"
-        u.transfers_json = "[]";
+        u.balance           = 100_000.0
+        u.tier_idx          = 0
+        u.portfolio_json    = "{}"
+        u.cost_basis_json   = "{}"
+        u.loans_json        = "[]"
+        u.history_json      = "[]"
+        u.transfers_json    = "[]"
         u.today_transferred = 0.0
-        db.add(u);
+        u.updated_at        = datetime.now(timezone.utc)
+        db.add(u)
         db.commit()
     return jsonify({"ok": True})
 
