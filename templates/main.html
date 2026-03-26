@@ -455,7 +455,7 @@ const TIERS = [
   { name:'PLATINUM', icon:'💎', cost:10_000_000_000,gamblingLimit:50_000_000,  transferLimit:Infinity,      class:'tier-platinum' },
 ];
 
-const MAX_LOAN = 100_000_000; // 전 티어 공통 1억 한도
+const TIER_LOAN_LIMITS = { 0:100_000_000, 1:300_000_000, 2:300_000_000, 3:1_000_000_000, 4:3_000_000_000 };
 
 const STOCKS = [
   { id:'os',  name:'오성전자',   type:'stock', emoji:'🔵', price:250000,  shares:2_680_000_000,   qty:0 },  // 시총 670조
@@ -475,7 +475,9 @@ const INDEX = [
 const ALL_ASSETS = [...STOCKS, ...COINS, ...INDEX];
 
 const LOAN_PRODUCTS = [
-  { id:'invest', name:'일반 대출', rate:'0.8%/시간', pctOfLimit:1.00, desc:'최대 1억원, 시간당 이자 0.8%' },
+  { id:'micro', name:'초단기 소액대출', rate:'5%/시간',   pctOfLimit:0.10, desc:'한도의 10%, 시간당 이자 5%' },
+  { id:'short', name:'단기 생활자금',   rate:'2%/시간',   pctOfLimit:0.30, desc:'한도의 30%, 시간당 이자 2%' },
+  { id:'invest',name:'투자 목적 대출',  rate:'0.8%/시간', pctOfLimit:1.00, desc:'한도 전액, 시간당 이자 0.8%' },
 ];
 
 
@@ -521,7 +523,7 @@ async function syncPricesFromServer() {
     });
 
     updateTicker();
-    if (state.currentPage === 'market')    renderMarket();
+    if (state.currentPage === 'market')    updateMarketInPlace();
     if (state.currentPage === 'dashboard') updateDashboardStats();
   } catch(e) { /* 서버 연결 실패 시 무시 */ }
 }
@@ -876,7 +878,9 @@ function updateDashboardStats() {
 /* ════════════════════════════════════════
    MARKET
 ════════════════════════════════════════ */
-let activeMarketTab = 'stock';
+let activeMarketTab   = 'stock';
+let activeChartAsset  = 'jio';   // 차트에 표시 중인 종목 ID — 폴링 때도 유지됨
+let _marketChartInst  = null;    // Chart.js 인스턴스 — destroy 용
 function renderMarket() {
   const assets = activeMarketTab === 'stock' ? STOCKS : activeMarketTab === 'coin' ? COINS : INDEX;
   document.getElementById('page-content').innerHTML = `
@@ -889,7 +893,7 @@ function renderMarket() {
       }).join('')}
     </div>
     <div class="card" style="padding:0;overflow:hidden;">
-      <table class="data-table">
+      <table class="data-table" id="market-price-table">
         <thead><tr><th style="padding-left:18px">종목</th><th>현재가</th><th>변동률</th><th>시가총액</th><th style="width:160px;text-align:center">거래</th></tr></thead>
         <tbody>
           ${assets.map(a => {
@@ -897,12 +901,12 @@ function renderMarket() {
             const prev = hist.length >= 2 ? hist[hist.length-2] : a.price;
             const chg  = ((a.price - prev) / prev * 100).toFixed(2);
             const cls  = chg >= 0 ? 'up-text' : 'down-text';
-            return `<tr>
+            return `<tr data-aid="${a.id}">
               <td style="padding-left:18px"><div class="asset-row"><div class="asset-icon">${a.emoji}</div>
                 <div><div style="font-weight:600">${a.name}</div><div style="font-size:.7rem;color:var(--text3)">${a.type.toUpperCase()}</div></div></div></td>
-              <td class="mono">₩${fmt(a.price)}</td>
-              <td class="mono ${cls}">${chg >= 0 ? '+' : ''}${chg}%</td>
-              <td class="mono">${fmtBig(a.price * a.shares)}</td>
+              <td class="mono market-price">₩${fmt(a.price)}</td>
+              <td class="mono market-chg ${cls}">${chg >= 0 ? '+' : ''}${chg}%</td>
+              <td class="mono market-cap">${fmtBig(a.price * a.shares)}</td>
               <td style="text-align:center"><div class="btn-group" style="justify-content:center">
                 <button class="btn btn-green btn-sm" onclick="openTradeModal('${a.id}','buy')">매수</button>
                 <button class="btn btn-red btn-sm" onclick="openTradeModal('${a.id}','sell')">매도</button>
@@ -914,9 +918,9 @@ function renderMarket() {
     </div>
     <div style="margin-top:22px;"><div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
-        <div class="card-title">📊 실시간 차트</div>
-        <select id="chart-asset-select" class="form-select" style="width:180px;padding:6px 10px;font-size:.82rem;" onchange="drawMarketChart()">
-          ${ALL_ASSETS.map(a=>`<option value="${a.id}">${a.emoji} ${a.name}</option>`).join('')}
+        <div class="card-title" id="chart-title">📊 실시간 차트</div>
+        <select id="chart-asset-select" class="form-select" style="width:180px;padding:6px 10px;font-size:.82rem;" onchange="onChartSelectChange(this.value)">
+          ${ALL_ASSETS.map(a=>`<option value="${a.id}" ${a.id===activeChartAsset?'selected':''}>${a.emoji} ${a.name}</option>`).join('')}
         </select>
       </div>
       <canvas id="market-chart" height="80"></canvas>
@@ -926,26 +930,70 @@ function renderMarket() {
 
 function setMarketTab(t) { activeMarketTab = t; renderMarket(); }
 
-let _marketChartInst = null;
+/** 드롭다운 변경 시 — activeChartAsset 저장 후 차트만 다시 그림 */
+function onChartSelectChange(aid) {
+  activeChartAsset = aid;
+  drawMarketChart();
+}
+
+/** 가격 폴링 후 테이블 숫자만 DOM 업데이트 (전체 재렌더 없음) */
+function updateMarketInPlace() {
+  const table = document.getElementById('market-price-table');
+  if (!table) { renderMarket(); return; }   // 테이블 없으면 최초 렌더
+
+  const assets = activeMarketTab === 'stock' ? STOCKS : activeMarketTab === 'coin' ? COINS : INDEX;
+  assets.forEach(a => {
+    const row = table.querySelector(`tr[data-aid="${a.id}"]`);
+    if (!row) return;
+    const hist = state.priceHistory[a.id];
+    const prev = hist.length >= 2 ? hist[hist.length-2] : a.price;
+    const chg  = ((a.price - prev) / prev * 100).toFixed(2);
+    const cls  = parseFloat(chg) >= 0 ? 'up-text' : 'down-text';
+    row.querySelector('.market-price').textContent = '₩' + fmt(a.price);
+    const chgEl = row.querySelector('.market-chg');
+    chgEl.textContent  = (parseFloat(chg) >= 0 ? '+' : '') + chg + '%';
+    chgEl.className    = `mono market-chg ${cls}`;
+    row.querySelector('.market-cap').textContent = fmtBig(a.price * a.shares);
+  });
+
+  // 차트도 현재 선택 종목으로만 업데이트
+  updateChartInPlace();
+}
+
+/** 차트 데이터만 업데이트 (destroy/재생성 없이 data.labels·data 교체) */
+function updateChartInPlace() {
+  if (!_marketChartInst) return;
+  const hist   = state.priceHistory[activeChartAsset] || [];
+  const labels = hist.map((_,i) => i === hist.length-1 ? '현재' : `-${(hist.length-1-i)*0.5}분`);
+  _marketChartInst.data.labels           = labels;
+  _marketChartInst.data.datasets[0].data = hist;
+  _marketChartInst.update('none');  // 애니메이션 없이 즉시 갱신
+}
+
 function drawMarketChart() {
   const ctx = document.getElementById('market-chart');
   if (!ctx) return;
-  const sel  = document.getElementById('chart-asset-select');
-  const aid  = sel ? sel.value : 'jio';
-  const asset = ALL_ASSETS.find(a => a.id === aid) || ALL_ASSETS[ALL_ASSETS.length-1];
-  const hist   = state.priceHistory[aid] || [asset.price];
+  const asset  = ALL_ASSETS.find(a => a.id === activeChartAsset) || ALL_ASSETS[ALL_ASSETS.length-1];
+  const hist   = state.priceHistory[activeChartAsset] || [asset.price];
   const labels = hist.map((_,i) => i === hist.length-1 ? '현재' : `-${(hist.length-1-i)*0.5}분`);
-  const colorMap = {stock:'#1a4f8a', coin:'#b8963e', index:'#1a7a4a'};
+  const colorMap = { stock:'#1a4f8a', coin:'#b8963e', index:'#1a7a4a' };
   const color    = colorMap[asset.type] || '#1a4f8a';
+  const bgColor  = color + '12';
+  // 이전 인스턴스 파괴
   if (_marketChartInst) { _marketChartInst.destroy(); _marketChartInst = null; }
   _marketChartInst = new Chart(ctx, {
     type:'line',
-    data:{ labels, datasets:[{ data:hist, borderColor:color, backgroundColor:color.replace(')',', .07)').replace('rgb','rgba'), tension:.4, fill:true, pointRadius:0, borderWidth:2 }] },
+    data:{ labels, datasets:[{ data:hist, borderColor:color, backgroundColor:bgColor,
+      tension:.4, fill:true, pointRadius:0, borderWidth:2 }] },
     options:{ responsive:true, animation:false,
       plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>'₩'+fmt(c.raw)}} },
-      scales:{ y:{ticks:{callback:v=>'₩'+fmtShort(v),font:{family:'JetBrains Mono',size:11}},grid:{color:'#f0f0ec'}}, x:{ticks:{font:{size:10},maxTicksLimit:8},grid:{display:false}} }
+      scales:{ y:{ticks:{callback:v=>'₩'+fmtShort(v),font:{family:'JetBrains Mono',size:11}},grid:{color:'#f0f0ec'}},
+               x:{ticks:{font:{size:10},maxTicksLimit:8},grid:{display:false}} }
     }
   });
+  // 차트 제목 업데이트
+  const titleEl = document.getElementById('chart-title');
+  if (titleEl) titleEl.textContent = `📊 ${asset.emoji} ${asset.name} 실시간 차트`;
 }
 
 function openTradeModal(assetId, action) {
@@ -1307,42 +1355,42 @@ function resetBJ(){bjState.active=false;document.getElementById('game-stage').in
    BANK
 ════════════════════════════════════════ */
 function renderBank() {
-  const totalLoan  = state.loans.reduce((s,l) => s+l.remaining, 0);
-  const totalInt   = state.loans.reduce((s,l) => s+l.daily, 0);
-  const hasLoan    = state.loans.length > 0;
-  // 미상환 대출이 있으면 신규 대출 불가
-  const canBorrow  = !hasLoan;
+  const tierIdx = state.user.tierIdx;
+  const tierLimit = TIER_LOAN_LIMITS[tierIdx];
+  const tierName  = TIERS[tierIdx].name;
+  const totalLoan = state.loans.reduce((s,l) => s+l.remaining, 0);
+  const totalInt  = state.loans.reduce((s,l) => s+l.daily, 0);
   document.getElementById('page-content').innerHTML = `
     ${adBannerHTML()}
-    <div class="page-heading"><h1>은행 대출</h1><p>최대 1억 · 상환 완료 후 재대출 가능</p></div>
+    <div class="page-heading"><h1>은행 대출</h1><p>자금이 필요하면 대출을 활용하세요</p></div>
     <div style="background:var(--blue-bg);border:1px solid #c8d8ef;border-radius:var(--radius);padding:12px 16px;font-size:.8rem;color:var(--blue);margin-bottom:18px;">
-      ℹ️ 전 티어 공통 대출 한도: <strong>₩${fmt(MAX_LOAN)}</strong> &nbsp;·&nbsp;
-      <strong>기존 대출을 전액 상환해야 재대출 가능합니다.</strong>
+      ℹ️ <strong>${tierName} 등급</strong> 최대 대출 한도: <strong>₩${fmt(tierLimit)}</strong>
     </div>
     <div class="loan-info-grid">
       <div class="loan-info-item"><div class="loan-info-label">총 대출 잔액</div><div class="loan-info-value" style="color:var(--red)">₩${fmt(totalLoan)}</div></div>
-      <div class="loan-info-item"><div class="loan-info-label">시간당 이자</div><div class="loan-info-value" style="color:var(--red)">₩${fmt(totalInt)}</div></div>
-      <div class="loan-info-item"><div class="loan-info-label">대출 한도</div><div class="loan-info-value">₩${fmt(MAX_LOAN)}</div></div>
+      <div class="loan-info-item"><div class="loan-info-label">시간당 이자 부담</div><div class="loan-info-value" style="color:var(--red)">₩${fmt(totalInt)}</div></div>
+      <div class="loan-info-item"><div class="loan-info-label">내 대출 한도</div><div class="loan-info-value">₩${fmt(tierLimit)}</div></div>
     </div>
     <div class="grid-2">
       <div>
-        <div class="card-title" style="margin-bottom:12px;font-size:.88rem;font-weight:700">대출 신청</div>
-        ${!canBorrow ? `
-        <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:16px;font-size:.84rem;color:#856404;margin-bottom:14px;">
-          ⚠️ 현재 대출이 남아 있습니다.<br>기존 대출을 <strong>전액 상환</strong>한 후 재대출 신청이 가능합니다.
-        </div>` : ''}
-        <div class="loan-product-card selected">
-          <div class="loan-product-header"><div class="loan-product-name">일반 대출</div><div class="loan-rate">0.8%/시간</div></div>
-          <div class="loan-product-desc">최대 ₩${fmt(MAX_LOAN)} · 시간당 이자 0.8%</div>
-        </div>
+        <div class="card-title" style="margin-bottom:12px;font-size:.88rem;font-weight:700">대출 상품 선택</div>
+        ${LOAN_PRODUCTS.map(p => {
+          const maxAmt = Math.floor(tierLimit * p.pctOfLimit);
+          return `<div class="loan-product-card ${state.loanSelected===p.id?'selected':''}" onclick="selectLoanProduct('${p.id}')">
+            <div class="loan-product-header"><div class="loan-product-name">${p.name}</div><div class="loan-rate">${p.rate}</div></div>
+            <div class="loan-product-desc">${p.desc} <strong>(최대 ₩${fmt(maxAmt)})</strong></div>
+          </div>`;
+        }).join('')}
         <div class="form-group" style="margin-top:14px">
           <label class="form-label">대출 금액</label>
-          <input class="form-input" type="number" id="loan-amount" placeholder="0" max="${MAX_LOAN}" ${!canBorrow?'disabled':''}/>
-          <div class="form-hint">최대 ₩${fmt(MAX_LOAN)}</div>
+          <input class="form-input" type="number" id="loan-amount" placeholder="0"/>
         </div>
-        <button class="btn btn-primary btn-full" onclick="applyLoan()" ${!canBorrow?'disabled style="opacity:.4;cursor:not-allowed"':''}>
-          ${canBorrow ? '대출 신청' : '상환 후 신청 가능'}
-        </button>
+        <button class="btn btn-primary btn-full" onclick="applyLoan()">대출 신청</button>
+        <div style="margin-top:16px;background:var(--surface);border-radius:var(--radius);padding:12px 14px;font-size:.75rem;color:var(--text3);">
+          <div style="font-weight:700;color:var(--text2);margin-bottom:6px">📋 티어별 최대 대출 한도</div>
+          ${TIERS.map((t,i)=>`<div style="display:flex;justify-content:space-between;padding:3px 0;${i===tierIdx?'color:var(--accent);font-weight:700':''}">
+            <span>${t.icon} ${t.name}</span><span>₩${fmt(TIER_LOAN_LIMITS[i])}</span></div>`).join('')}
+        </div>
       </div>
       <div>
         <div class="card-title" style="margin-bottom:12px;font-size:.88rem;font-weight:700">현재 대출 현황</div>
@@ -1354,8 +1402,8 @@ function renderBank() {
           <div style="font-family:var(--font-mono);font-size:1rem;font-weight:700;color:var(--red)">₩${fmt(l.remaining)}</div>
           <div style="font-size:.72rem;color:var(--text3);margin-top:3px">시간당 이자: ₩${fmt(l.daily)}</div>
           <div class="progress-bar" style="margin-top:10px"><div class="progress-fill" style="width:${Math.min(100,(l.remaining/l.original)*100)}%;background:var(--red)"></div></div>
-          <button class="btn btn-red btn-sm btn-full" style="margin-top:10px" onclick="repayLoan(${i})">💳 전액 상환하기</button>
-        </div>`).join('') : `<div class="card" style="text-align:center;padding:30px;color:var(--text3);font-size:.84rem">✅ 대출 없음</div>`}
+          <button class="btn btn-outline btn-sm btn-full" style="margin-top:10px" onclick="repayLoan(${i})">상환하기</button>
+        </div>`).join('') : `<div class="card" style="text-align:center;padding:30px;color:var(--text3);font-size:.84rem">대출 없음</div>`}
       </div>
     </div>`;
 }
@@ -1363,16 +1411,19 @@ function renderBank() {
 function selectLoanProduct(id) { state.loanSelected = id; renderBank(); }
 
 function applyLoan() {
-  // 미상환 대출이 있으면 차단
-  if (state.loans.length > 0) { showToast('기존 대출을 먼저 상환하세요','error'); return; }
+  if (!state.loanSelected) { showToast('대출 상품을 선택하세요','error'); return; }
+  const p = LOAN_PRODUCTS.find(x => x.id === state.loanSelected);
+  const maxAmt = Math.floor(TIER_LOAN_LIMITS[state.user.tierIdx] * p.pctOfLimit);
   const amt = parseInt(document.getElementById('loan-amount').value) || 0;
-  if (amt <= 0)          { showToast('대출 금액을 입력하세요','error'); return; }
-  if (amt > MAX_LOAN)    { showToast(`최대 한도 ₩${fmt(MAX_LOAN)} 초과`,'error'); return; }
-  const rateNum        = 0.008; // 0.8%/시간
+  if (amt <= 0) { showToast('대출 금액을 입력하세요','error'); return; }
+  if (amt > maxAmt) { showToast(`최대 한도 ₩${fmt(maxAmt)} 초과`,'error'); return; }
+  const rateNum = parseFloat(p.rate) / 100;
   const hourlyInterest = Math.round(amt * rateNum);
   state.loans.push({
-    name: '일반 대출', rate: '0.8%/시간', original: amt, remaining: amt,
-    daily: hourlyInterest, hourly: hourlyInterest, lastTick: Date.now(),
+    name: p.name, rate: p.rate, original: amt, remaining: amt,
+    daily: hourlyInterest,      // UI 호환용 (실제로는 시간당)
+    hourly: hourlyInterest,     // 1시간마다 차감
+    lastTick: Date.now(),
   });
   state.user.balance += amt; updateSidebar();
   showToast(`₩${fmt(amt)} 대출 완료!`,'success'); saveToServer(); renderBank();
@@ -1662,8 +1713,14 @@ async function renderAdmin() {
       '<div style="padding:40px;text-align:center;color:var(--red)">접근 권한이 없습니다.</div>';
     return;
   }
+
   document.getElementById('page-content').innerHTML = `
-    <div class="page-heading"><h1>👑 관리자 패널</h1><p>관리자 전용</p></div>
+    <div class="page-heading">
+      <h1>👑 관리자 패널</h1>
+      <p>flyingkjo@dgsw.hs.kr 전용</p>
+    </div>
+
+    <!-- 공지 -->
     <div class="card" style="margin-bottom:18px;">
       <div class="card-title" style="margin-bottom:12px;">📢 전체 공지</div>
       <div style="display:flex;gap:8px;">
@@ -1671,13 +1728,18 @@ async function renderAdmin() {
         <button class="btn btn-gold" onclick="adminAnnounce()">전송</button>
       </div>
     </div>
+
+    <!-- 유저 목록 -->
     <div class="card">
       <div class="card-header">
         <div class="card-title">👥 전체 유저 관리</div>
-        <button class="btn btn-outline btn-sm" onclick="loadAdminUsers()">🔄 새로고침</button>
+        <button class="btn btn-outline btn-sm" onclick="loadAdminUsers()">새로고침</button>
       </div>
-      <div id="admin-users-table"><div style="text-align:center;padding:20px;color:var(--text3);">불러오는 중...</div></div>
+      <div id="admin-users-table">
+        <div style="text-align:center;padding:20px;color:var(--text3);">불러오는 중...</div>
+      </div>
     </div>`;
+
   loadAdminUsers();
 }
 
@@ -1685,58 +1747,31 @@ async function loadAdminUsers() {
   const res  = await fetch('/api/admin/users');
   const data = await res.json();
   if (!data.ok) { showToast('유저 목록 로드 실패', 'error'); return; }
+
   const TIER_NAMES = ['IRON','BRONZE','SILVER','GOLD','PLATINUM'];
-
-  const rows = data.users.map(u => {
-    // 포트폴리오 요약 (수익률 순 정렬)
-    const pRows = (u.portfolioDetail || []).sort((a,b)=>b.curVal-a.curVal).map(p => {
-      const sign = p.pnl >= 0 ? '+' : '';
-      const color = p.pnl >= 0 ? 'var(--green)' : 'var(--red)';
-      return `<tr style="font-size:.72rem;">
-        <td style="padding:3px 8px;">${p.name}</td>
-        <td style="padding:3px 8px;" class="mono">${fmt(p.qty)}주</td>
-        <td style="padding:3px 8px;" class="mono">₩${fmtShort(p.avgPrice)}</td>
-        <td style="padding:3px 8px;" class="mono">₩${fmtShort(p.curVal)}</td>
-        <td style="padding:3px 8px;color:${color};font-weight:700;" class="mono">${sign}${p.roe}%</td>
-      </tr>`;
-    }).join('');
-
-    const hasPortfolio = (u.portfolioDetail || []).length > 0;
-    const portfolioHTML = hasPortfolio ? `
-      <details style="margin-top:8px;">
-        <summary style="font-size:.74rem;color:var(--blue);cursor:pointer;font-weight:600;">📊 포트폴리오 보기 (${u.portfolioDetail.length}종목)</summary>
-        <table class="data-table" style="margin-top:6px;font-size:.72rem;">
-          <thead><tr><th>종목</th><th>수량</th><th>평균단가</th><th>평가액</th><th>수익률</th></tr></thead>
-          <tbody>${pRows}</tbody>
-        </table>
-      </details>` : '<div style="font-size:.72rem;color:var(--text3);margin-top:4px;">포트폴리오 없음</div>';
-
-    return `<tr>
-      <td style="font-weight:700;">${u.username}${u.isAdmin?'&nbsp;<span class="badge badge-blue">관리자</span>':''}</td>
-      <td class="mono" style="color:${u.balance>50_000_000?'var(--red)':'inherit'}">₩${fmt(u.balance)}</td>
-      <td class="mono" style="color:var(--red);font-size:.8rem;">₩${fmt(u.totalLoan||0)}</td>
-      <td><span class="badge badge-blue" style="font-size:.68rem;">${TIER_NAMES[u.tierIdx]}</span></td>
-      <td style="font-size:.72rem;color:var(--text3);">${u.createdAt}</td>
+  const rows = data.users.map(u => `
+    <tr>
+      <td style="font-weight:600">${u.username}</td>
+      <td style="font-size:.75rem;color:var(--text3)">${u.email}</td>
+      <td class="mono">₩${fmt(u.balance)}</td>
+      <td><span class="badge badge-blue">${TIER_NAMES[u.tierIdx]}</span></td>
+      <td style="font-size:.74rem;color:var(--text3)">${u.createdAt}</td>
       <td>
-        <div style="font-size:.75rem;">${portfolioHTML}</div>
-        <div class="btn-group" style="margin-top:8px;flex-wrap:wrap;">
-          <button class="btn btn-outline btn-sm" onclick="adminSetBalance(${u.id},'${u.username}')">💰</button>
-          <button class="btn btn-outline btn-sm" onclick="adminSetTier(${u.id},'${u.username}')">⭐</button>
+        <div class="btn-group">
+          <button class="btn btn-outline btn-sm" onclick="adminSetBalance(${u.id},'${u.username}')">💰 잔액</button>
+          <button class="btn btn-outline btn-sm" onclick="adminSetTier(${u.id},'${u.username}')">⭐ 티어</button>
           ${u.isAdmin ? '' : `
           <button class="btn btn-red btn-sm" onclick="adminBan(${u.id},'${u.username}')">🚫 제재</button>
-          <button class="btn btn-outline btn-sm" onclick="adminReset(${u.id},'${u.username}')">🔄 초기화</button>
-          <button class="btn btn-sm" style="background:#6c1a1a;color:#fff;" onclick="adminDelete(${u.id},'${u.username}')">🗑️ 삭제</button>`}
+          <button class="btn btn-outline btn-sm" onclick="adminReset(${u.id},'${u.username}')">🔄 초기화</button>`}
         </div>
       </td>
-    </tr>`;
-  }).join('');
+    </tr>`).join('');
 
   document.getElementById('admin-users-table').innerHTML = `
-    <div style="overflow-x:auto;">
     <table class="data-table">
-      <thead><tr><th>아이디</th><th>잔액</th><th>대출잔액</th><th>티어</th><th>가입일</th><th>포트폴리오 / 관리</th></tr></thead>
+      <thead><tr><th>아이디</th><th>이메일</th><th>잔액</th><th>티어</th><th>가입일</th><th>관리</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table></div>`;
+    </table>`;
 }
 
 async function adminAnnounce() {
@@ -1781,34 +1816,19 @@ async function adminSetTier(uid, name) {
 }
 
 async function adminBan(uid, name) {
-  if (!confirm(`[제재] ${name}\n\n잔액·포트폴리오·대출·거래내역 모두 0으로 초기화됩니다.\n계속하시겠습니까?`)) return;
-  try {
-    const res  = await fetch(`/api/admin/user/${uid}/ban`, {method:'POST', headers:{'Content-Type':'application/json'}});
-    const data = await res.json();
-    if (data.ok) { showToast(`${name} 제재 완료`, 'success'); loadAdminUsers(); }
-    else showToast(data.error || '제재 실패', 'error');
-  } catch(e) { showToast('서버 오류', 'error'); }
+  if (!confirm(`${name}을(를) 제재하시겠습니까?\n잔액 0, 티어 초기화, 대출 전액 삭제`)) return;
+  const res  = await fetch(`/api/admin/user/${uid}/ban`, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) { showToast(`${name} 제재 완료`, 'success'); loadAdminUsers(); }
+  else showToast(data.error || '실패', 'error');
 }
 
 async function adminReset(uid, name) {
-  if (!confirm(`[초기화] ${name}\n\n모든 자산이 초기 상태(₩100,000)로 리셋됩니다.\n계속하시겠습니까?`)) return;
-  try {
-    const res  = await fetch(`/api/admin/user/${uid}/reset`, {method:'POST', headers:{'Content-Type':'application/json'}});
-    const data = await res.json();
-    if (data.ok) { showToast(`${name} 초기화 완료`, 'success'); loadAdminUsers(); }
-    else showToast(data.error || '초기화 실패', 'error');
-  } catch(e) { showToast('서버 오류', 'error'); }
-}
-
-async function adminDelete(uid, name) {
-  if (!confirm(`[계정 삭제] ${name}\n\n이 작업은 되돌릴 수 없습니다!\n계정을 영구 삭제하시겠습니까?`)) return;
-  if (!confirm(`정말 삭제합니까? "${name}" 계정이 영구 제거됩니다.`)) return;
-  try {
-    const res  = await fetch(`/api/admin/user/${uid}/delete`, {method:'POST', headers:{'Content-Type':'application/json'}});
-    const data = await res.json();
-    if (data.ok) { showToast(`${name} 계정 삭제 완료`, 'success'); loadAdminUsers(); }
-    else showToast(data.error || '삭제 실패', 'error');
-  } catch(e) { showToast('서버 오류', 'error'); }
+  if (!confirm(`${name}의 모든 자산을 초기화하시겠습니까?\n잔고 ₩100,000으로 리셋`)) return;
+  const res  = await fetch(`/api/admin/user/${uid}/reset`, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) { showToast(`${name} 초기화 완료`, 'success'); loadAdminUsers(); }
+  else showToast(data.error || '실패', 'error');
 }
 /*AUTH*/
 
