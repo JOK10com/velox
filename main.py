@@ -14,7 +14,7 @@ from flask import Flask, render_template, request, jsonify, session
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 # ── 앱 설정 ──────────────────────────────────────────
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", static_url_path="")
 app.secret_key = os.environ.get("SECRET_KEY", "velox-dev-secret-key-change-in-prod")
 
 # ── DB 설정 (Supabase PostgreSQL) ─────────────────────
