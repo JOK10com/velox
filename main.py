@@ -1644,6 +1644,28 @@ def ads_txt():
 
 
 # ── 실행 ───────────────────────────────────────────────
+
+# 서버 시작 시 잔액 1조 초과 유저 일괄 롤백
+def _rollback_excess_balances():
+    try:
+        with Session(engine) as db:
+            users = db.exec(select(User)).all()
+            count = 0
+            for u in users:
+                if u.balance > BALANCE_CEILING:
+                    print(f"[VELOX] 잔액 롤백: {u.username} ₩{u.balance:,.0f} → 1억")
+                    u.balance = float(BALANCE_RESET)
+                    db.add(u)
+                    count += 1
+            if count > 0:
+                db.commit()
+                print(f"[VELOX] 잔액 초과 유저 {count}명 롤백 완료")
+            else:
+                print("[VELOX] 잔액 초과 유저 없음")
+    except Exception as e:
+        print(f"[VELOX] 잔액 롤백 오류: {e}")
+
+_rollback_excess_balances()
 _engine_thread.start()
 
 if __name__ == "__main__":
