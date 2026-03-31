@@ -1,0 +1,6 @@
+flask
+sqlmodel
+authlib
+werkzeug
+gunicorn
+psycopg2-binary
