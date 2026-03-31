@@ -802,11 +802,15 @@ def api_trade():
             impact_pct = math.sqrt(raw_ratio) * liq * (1 if action == "buy" else -1)
             is_small = aid in SMALL_COINS
             max_drop = -0.60 if is_small else (-0.35 if asset_type == "coin" else -0.40)
-            clamped = max(max_drop, min(0.15, impact_pct))
+            # 즉시 가격 반영분: ±5% 이내로 제한
+            clamped = max(-0.05, min(0.05, impact_pct))
             old_price = prices[aid]
             floor = PRICE_FLOORS.get(aid, 1)
             prices[aid] = max(floor, round(old_price * (1 + clamped)))
-            trade_impact[aid] = trade_impact.get(aid, 0.0) + impact_pct * 0.4
+            # trade_impact 누적분도 클램프 — 틱에서 복리 폭등 방지
+            current_impact = trade_impact.get(aid, 0.0)
+            added = max(-0.05, min(0.05, impact_pct * 0.4))
+            trade_impact[aid] = max(-0.30, min(0.30, current_impact + added))
             price_history[aid].append(prices[aid])
             if len(price_history[aid]) > 60:
                 price_history[aid].pop(0)
