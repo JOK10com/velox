@@ -380,6 +380,12 @@ _run_migrations()
 _load_listed_assets()   # 상장 종목 먼저 등록 (가격 복원 시 히스토리 포함)
 _load_market_state()    # 마지막 가격 덮어쓰기
 
+# 서버 시작 시 상한 초과 가격 즉시 정리
+with _price_lock:
+    for _aid in list(prices.keys()):
+        _apply_ceiling(_aid)
+_save_market_state()
+
 
 # ── 헬퍼 ──────────────────────────────────────────────
 def hash_pw(pw: str) -> str:
@@ -654,7 +660,7 @@ def api_get_prices():
 
     with _price_lock:
         snap_prices = dict(prices)
-        snap_history = {k: list(v) for k, v in price_history.items()}
+        snap_history = {k: list(v)[-30:] for k, v in price_history.items()}
 
     return jsonify({
         "ok": True,
@@ -828,6 +834,7 @@ def api_trade():
             current_impact = trade_impact.get(aid, 0.0)
             added = max(-0.05, min(0.05, impact_pct * 0.4))
             trade_impact[aid] = max(-0.30, min(0.30, current_impact + added))
+            _apply_ceiling(aid)      # 거래 직후에도 50억 상한 체크
             new_price = prices[aid]  # BUG #7 수정: 락 안에서 읽기
 
         total = qty * exec_price
