@@ -443,6 +443,7 @@ const STOCKS = [
   { id:'mr',  name:'미래자동차', type:'stock', emoji:'🚗', price:200000,  shares:425_000_000,     qty:0 },  // 시총 85조
   { id:'nv',  name:'AND비디아',  type:'stock', emoji:'🟢', price:500000,  shares:13_400_000_000,  qty:0 },  // 시총 6700조
   { id:'bn',  name:'bAnana',     type:'stock', emoji:'🍌', price:300000,  shares:19_166_666_667,  qty:0 },  // 시총 5750조
+  { id:'hb',  name:'함박아날드',  type:'stock', emoji:'🍔', price:20000,   shares:500_000_000,     qty:0 },  // 시총 10조
 ];
 const COINS = [
   { id:'btc', name:'바이트코인', type:'coin', emoji:'₿',  price:50_000_000, shares:40_000_000,       qty:0 },  // 시총 2000조
@@ -1251,6 +1252,7 @@ async function executeTrade(id, action) {
     const sign   = data.impactPct >= 0 ? '+' : '';
     const action_label = action === 'buy' ? '매수' : '매도';
     showToast(`${a.name} ${action_label} 완료 | 가격 ${sign}${data.impactPct}%`, 'success');
+    if (data.balanceReset) showToast('⚠️ 잔액이 1조를 초과하여 1억으로 초기화됐습니다.', 'error');
     updateSidebar();
     closeModal('trade-modal');
   } catch(e) {
@@ -1379,6 +1381,7 @@ async function playGame() {
 
     state.user.balance = data.balance;
     updateSidebar();
+    if (data.balanceReset) showToast('⚠️ 잔액이 1조를 초과하여 1억으로 초기화됐습니다.', 'error');
 
     if (state.gambling.game === 'horse') {
       const { horseRanks, selRank } = data.result;

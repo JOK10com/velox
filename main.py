@@ -84,6 +84,7 @@ INITIAL_PRICES = {
     'mr': 200000,
     'nv': 500000,
     'bn': 300000,
+    'hb': 20_000,
     'btc': 50_000_000,
     'bth': 7_000_000,
     'shi': 2_000,
@@ -96,6 +97,7 @@ ASSET_SHARES = {
     'mr': 425_000_000,
     'nv': 13_400_000_000,
     'bn': 19_166_666_667,
+    'hb': 500_000_000,
     'btc': 40_000_000,
     'bth': 95_714_286,
     'shi': 11_250_000_000,
@@ -104,19 +106,19 @@ ASSET_SHARES = {
 }
 
 ASSET_TYPES = {
-    'os': 'stock', 'mr': 'stock', 'nv': 'stock', 'bn': 'stock',
+    'os': 'stock', 'mr': 'stock', 'nv': 'stock', 'bn': 'stock', 'hb': 'stock',
     'btc': 'coin', 'bth': 'coin', 'shi': 'coin', 'dge': 'coin',
     'jio': 'index',
 }
 
 ASSET_NAMES = {
-    'os': '오성전자', 'mr': '미래자동차', 'nv': 'AND비디아', 'bn': 'bAnana',
+    'os': '오성전자', 'mr': '미래자동차', 'nv': 'AND비디아', 'bn': 'bAnana', 'hb': '함박아날드',
     'btc': '바이트코인', 'bth': 'Both코인', 'shi': '시발이누', 'dge': '닷지코인', 'jio': 'JIODAQ',
 }
 
 SMALL_COINS = {'shi', 'dge', 'bth'}
 
-STOCK_IDS = ['os', 'mr', 'nv', 'bn', 'jio']
+STOCK_IDS = ['os', 'mr', 'nv', 'bn', 'hb', 'jio']
 COIN_IDS = ['btc', 'bth', 'shi', 'dge']
 
 # ── 종목별 최저가 하한 ────────────────────────────────
@@ -126,6 +128,7 @@ PRICE_FLOORS: dict[str, int] = {
     'mr':  30_000,       # 미래자동차 — 경기민감 산업주       초기가 15%
     'nv':  75_000,       # AND비디아  — AI·반도체 고성장주    초기가 15%
     'bn':  45_000,       # bAnana    — 빅테크 고변동         초기가 15%
+    'hb':  3_000,        # 함박아날드 — 햄버거 프랜차이즈      초기가 15%
     'btc': 12_500_000,   # 바이트코인 — 대장코인 대형         초기가 25%
     'bth': 700_000,      # Both코인  — 중형 알트코인         초기가 10%
     'shi': 60,           # 시발이누  — 극고변동 밈코인        초기가  3%
@@ -212,6 +215,18 @@ def _load_market_state():
 
 
 PRICE_CEILING = 5_000_000_000  # 50억 — 초과 시 초기가 리셋
+
+BALANCE_CEILING = 1_000_000_000_000  # 1조 — 초과 시 1억으로 리셋
+BALANCE_RESET   =       100_000_000  # 1억
+
+
+def _apply_balance_ceiling(u) -> bool:
+    """잔액이 1조 초과 시 1억으로 리셋. 리셋 발생 시 True 반환."""
+    if u.balance > BALANCE_CEILING:
+        print(f"[VELOX] {u.username} 잔액 상한 초과 ₩{u.balance:,.0f} → 1억으로 리셋")
+        u.balance = float(BALANCE_RESET)
+        return True
+    return False
 
 
 def _apply_ceiling(aid: str):
@@ -839,6 +854,7 @@ def api_trade():
 
         total = qty * exec_price
 
+        _balance_reset = False
         if action == "buy":
             # 체결 직전 재검증 (극히 드문 동시성 케이스 대비)
             if u.balance < total:
@@ -859,6 +875,7 @@ def api_trade():
                     price_history[aid].pop()
                 return jsonify({"ok": False, "error": "보유량이 부족합니다"})
             u.balance += total
+            _balance_reset = _apply_balance_ceiling(u)
             # BUG #4 수정: 부동소수점 오차 방지 — 비율 대신 직접 차감
             old_cost = cost_basis.get(aid) or 0
             sold_cost = round(old_cost * qty / holding) if holding > 0 else 0
@@ -879,14 +896,15 @@ def api_trade():
         final_balance = u.balance
 
     return jsonify({
-        "ok":       True,
-        "balance":  final_balance,
-        "portfolio": portfolio,
-        "costBasis": cost_basis,
-        "history":  history,
-        "newPrice": new_price,   # BUG #7 수정: 락 안에서 읽은 값
-        "execPrice": exec_price,
-        "impactPct": round(clamped * 100, 2),
+        "ok":           True,
+        "balance":      final_balance,
+        "portfolio":    portfolio,
+        "costBasis":    cost_basis,
+        "history":      history,
+        "newPrice":     new_price,   # BUG #7 수정: 락 안에서 읽은 값
+        "execPrice":    exec_price,
+        "impactPct":    round(clamped * 100, 2),
+        "balanceReset": _balance_reset,
     })
 
 
@@ -940,6 +958,7 @@ def api_transfer():
         sender.balance -= amount
         sender.today_transferred += amount
         recipient.balance += amount
+        _apply_balance_ceiling(recipient)
 
         now_str = datetime.now(timezone.utc).strftime("%H:%M")
         s_transfers = json.loads(sender.transfers_json or "[]")
@@ -1039,6 +1058,7 @@ def api_gambling_bet():
             result_data = {"outcome": outcome}
 
         u.balance += payout
+        _balance_reset = _apply_balance_ceiling(u)
         net = payout - bet
 
         history = json.loads(u.history_json or "[]")
@@ -1051,7 +1071,7 @@ def api_gambling_bet():
         final_balance = u.balance
 
     return jsonify({"ok": True, "payout": payout, "net": net,
-                    "balance": final_balance, "result": result_data})
+                    "balance": final_balance, "result": result_data, "balanceReset": _balance_reset})
 
 
 @app.route("/api/gambling/blackjack/deal", methods=["POST"])
@@ -1092,6 +1112,7 @@ def api_bj_deal():
         with Session(engine) as db:
             u = db.get(User, user.id)
             u.balance += payout
+            _apply_balance_ceiling(u)
             net = payout - bet
             history = json.loads(u.history_json or "[]")
             history.append({"name": "블랙잭", "type": "sell" if net > 0 else "buy", "amount": abs(net)})
@@ -1163,6 +1184,7 @@ def api_bj_action():
         with Session(engine) as db:
             u = db.get(User, user.id)
             u.balance += payout
+            _apply_balance_ceiling(u)
             history = json.loads(u.history_json or "[]")
             history.append({"name": "블랙잭", "type": "sell" if net > 0 else "buy", "amount": abs(net)})
             u.history_json = json.dumps(history[-100:])
@@ -1215,6 +1237,7 @@ def api_loan_apply():
         })
         u.loans_json = json.dumps(loans)
         u.balance += amount
+        _apply_balance_ceiling(u)
         u.updated_at = datetime.now(timezone.utc)
         db.add(u); db.commit()
         final_balance = u.balance
