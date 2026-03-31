@@ -1,6 +1,7 @@
 flask
 sqlmodel
 authlib
+requests
 werkzeug
 gunicorn
 psycopg2-binary
