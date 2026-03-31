@@ -221,11 +221,32 @@ BALANCE_RESET   =       100_000_000  # 1억
 
 
 def _apply_balance_ceiling(u) -> bool:
-    """잔액이 1조 초과 시 1억으로 리셋. 리셋 발생 시 True 반환."""
+    """잔액이 1조 초과 시 1억으로 리셋 + 포트폴리오 초기화. 리셋 발생 시 True 반환."""
     if u.balance > BALANCE_CEILING:
-        print(f"[VELOX] {u.username} 잔액 상한 초과 ₩{u.balance:,.0f} → 1억으로 리셋")
-        u.balance = float(BALANCE_RESET)
+        print(f"[VELOX] {u.username} 잔액 상한 초과 ₩{u.balance:,.0f} → 잔액·포트폴리오 초기화")
+        u.balance          = float(BALANCE_RESET)
+        u.portfolio_json   = "{}"
+        u.cost_basis_json  = "{}"
         return True
+    return False
+
+
+# 총 발행량 대비 보유 비율 상한 (종목당 최대 1% 초과 시 비정상 보유로 간주)
+_MAX_HOLDING_RATIO = 0.01
+
+def _has_illegal_portfolio(u) -> bool:
+    """총 발행량의 1%를 초과하는 보유 종목이 있으면 비정상으로 판단."""
+    try:
+        portfolio = json.loads(u.portfolio_json or "{}")
+        for aid, qty in portfolio.items():
+            total_supply = ASSET_SHARES.get(aid, 0)
+            if total_supply > 0 and qty > total_supply * _MAX_HOLDING_RATIO:
+                return True
+            # 발행량 정보가 없는 유저 상장 종목도 수십조 개면 비정상
+            if total_supply == 0 and qty > 1_000_000_000_000:
+                return True
+    except Exception:
+        pass
     return False
 
 
@@ -876,12 +897,17 @@ def api_trade():
                 return jsonify({"ok": False, "error": "보유량이 부족합니다"})
             u.balance += total
             _balance_reset = _apply_balance_ceiling(u)
-            # BUG #4 수정: 부동소수점 오차 방지 — 비율 대신 직접 차감
-            old_cost = cost_basis.get(aid) or 0
-            sold_cost = round(old_cost * qty / holding) if holding > 0 else 0
-            remaining = holding - qty
-            cost_basis[aid] = 0 if remaining <= 0 else max(0, old_cost - sold_cost)
-            portfolio[aid] = max(0, remaining)
+            if _balance_reset:
+                # 잔액 초과 롤백 시 포트폴리오도 전체 초기화 (로컬 변수 동기화)
+                portfolio  = {}
+                cost_basis = {}
+            else:
+                # BUG #4 수정: 부동소수점 오차 방지 — 비율 대신 직접 차감
+                old_cost = cost_basis.get(aid) or 0
+                sold_cost = round(old_cost * qty / holding) if holding > 0 else 0
+                remaining = holding - qty
+                cost_basis[aid] = 0 if remaining <= 0 else max(0, old_cost - sold_cost)
+                portfolio[aid] = max(0, remaining)
 
         history = json.loads(u.history_json or "[]")
         history.append({"name": ASSET_NAMES.get(aid, aid), "type": action, "amount": total})
@@ -1645,23 +1671,33 @@ def ads_txt():
 
 # ── 실행 ───────────────────────────────────────────────
 
-# 서버 시작 시 잔액 1조 초과 유저 일괄 롤백
+# 서버 시작 시 잔액 1조 초과 / 비정상 포트폴리오 유저 일괄 롤백
 def _rollback_excess_balances():
     try:
         with Session(engine) as db:
             users = db.exec(select(User)).all()
             count = 0
             for u in users:
+                dirty = False
                 if u.balance > BALANCE_CEILING:
-                    print(f"[VELOX] 잔액 롤백: {u.username} ₩{u.balance:,.0f} → 1억")
-                    u.balance = float(BALANCE_RESET)
+                    print(f"[VELOX] 잔액 초과 롤백: {u.username} ₩{u.balance:,.0f} → 1억 + 포트폴리오 초기화")
+                    u.balance         = float(BALANCE_RESET)
+                    u.portfolio_json  = "{}"
+                    u.cost_basis_json = "{}"
+                    dirty = True
+                elif _has_illegal_portfolio(u):
+                    print(f"[VELOX] 비정상 포트폴리오 초기화: {u.username}")
+                    u.portfolio_json  = "{}"
+                    u.cost_basis_json = "{}"
+                    dirty = True
+                if dirty:
                     db.add(u)
                     count += 1
             if count > 0:
                 db.commit()
-                print(f"[VELOX] 잔액 초과 유저 {count}명 롤백 완료")
+                print(f"[VELOX] 총 {count}명 롤백 완료")
             else:
-                print("[VELOX] 잔액 초과 유저 없음")
+                print("[VELOX] 이상 유저 없음")
     except Exception as e:
         print(f"[VELOX] 잔액 롤백 오류: {e}")
 

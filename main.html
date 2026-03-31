@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <meta name="google-site-verification" content="xa0qlBlNcxdhZNLlWzk4Kw_uErnE8-SKYkyQNkgGm4w" />
 <title>VELOX — 가상 자산 증식 플랫폼</title>
-<link rel="icon" type="image/png" href="../static/favicon.png"> 
+<link rel="icon" type="image/png" href="/static/logo.png">
 <link rel="stylesheet" href="https://cdn-uicons.flaticon.com/4.0.0/uicons-bold-straight/css/uicons-bold-straight.css"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
@@ -42,7 +42,8 @@ input,select{font-family:inherit;}
 /* ── Layout ── */
 #app{display:flex;min-height:100vh;}
 #sidebar{width:var(--sidebar-w);min-height:100vh;background:var(--accent);display:flex;flex-direction:column;position:fixed;top:0;left:0;z-index:100;}
-.sidebar-logo{padding:22px 20px 18px;border-bottom:1px solid rgba(255,255,255,.08);}
+.sidebar-logo{padding:18px 20px 16px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px;}
+.sidebar-logo img.logo-img{width:36px;height:36px;object-fit:contain;flex-shrink:0;}
 .sidebar-logo .logo-mark{font-family:var(--font-display);font-size:2.2rem;letter-spacing:3px;color:#fff;display:block;}
 .sidebar-logo .logo-sub{font-size:.7rem;color:rgba(255,255,255,.38);letter-spacing:1.5px;text-transform:uppercase;margin-top:2px;}
 .sidebar-user{padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.08);}
@@ -143,7 +144,8 @@ nav{flex:1;padding:10px 0;overflow-y:auto;}
 /* ── Login Page ── */
 #login-page{min-height:100vh;background:var(--bg);display:flex;align-items:center;justify-content:center;}
 .login-card{width:400px;text-align:center;}
-.login-logo{font-family:var(--font-display);font-size:4rem;letter-spacing:6px;color:var(--accent);line-height:1;margin-bottom:4px;}
+.login-logo{line-height:1;margin-bottom:4px;}
+.login-logo img{width:72px;height:72px;object-fit:contain;}
 .login-tagline{font-size:.8rem;color:var(--text3);letter-spacing:2px;text-transform:uppercase;margin-bottom:28px;}
 .login-box{background:var(--bg);border:1.5px solid var(--border);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-lg);}
 .login-features{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px;}
@@ -303,7 +305,7 @@ nav{flex:1;padding:10px 0;overflow-y:auto;}
 <!-- ══ LOGIN PAGE ══ -->
 <div id="login-page">
   <div class="login-card fade-in">
-    <div class="login-logo">VELOX</div>
+    <div class="login-logo"><img src="/static/logo.png" alt="VELOX"></div>
     <div class="login-tagline">Virtual Asset Platform</div>
 
     <div class="login-box">
@@ -344,8 +346,11 @@ nav{flex:1;padding:10px 0;overflow-y:auto;}
 <div id="app" style="display:none;">
   <aside id="sidebar">
     <div class="sidebar-logo">
-      <span class="logo-mark">VELOX</span>
-      <span class="logo-sub">Asset Platform</span>
+      <img class="logo-img" src="/static/logo.png" alt="VELOX">
+      <div>
+        <span class="logo-mark">VELOX</span>
+        <span class="logo-sub">Asset Platform</span>
+      </div>
     </div>
     <div class="sidebar-user">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
