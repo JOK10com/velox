@@ -211,6 +211,21 @@ def _load_market_state():
         print(f"[VELOX] 가격 복원 오류: {e}")
 
 
+PRICE_CEILING = 5_000_000_000  # 50억 — 초과 시 초기가 리셋
+
+
+def _apply_ceiling(aid: str):
+    """가격이 50억 초과 시 초기가로 리셋 (락 내부에서 호출)"""
+    if prices[aid] > PRICE_CEILING:
+        reset = INITIAL_PRICES.get(aid, prices[aid])
+        prices[aid] = reset
+        price_history[aid].append(reset)
+        if len(price_history[aid]) > 60:
+            price_history[aid].pop(0)
+        trade_impact[aid] = 0.0
+        print(f"[VELOX] {aid} 가격 상한 초과 → 초기가 ₩{reset:,}으로 리셋")
+
+
 def _tick_stocks():
     global _last_stock_tick
     with _price_lock:
@@ -232,6 +247,7 @@ def _tick_stocks():
             price_history[aid].append(prices[aid])
             if len(price_history[aid]) > 60:
                 price_history[aid].pop(0)
+            _apply_ceiling(aid)
         _last_stock_tick = time.time()
     _save_market_state()
 
@@ -259,6 +275,7 @@ def _tick_coins():
             price_history[aid].append(prices[aid])
             if len(price_history[aid]) > 60:
                 price_history[aid].pop(0)
+            _apply_ceiling(aid)
         _last_coin_tick = time.time()
     _save_market_state()
 
@@ -279,9 +296,6 @@ def _price_engine_loop():
 
 _engine_thread = threading.Thread(target=_price_engine_loop, daemon=True)
 print("[VELOX] 가격 엔진 시작")
-
-# 서버 시작 타임스탬프 — 재배포 감지용
-BUILD_TS = int(time.time())
 
 
 # ── 모델 ──────────────────────────────────────────────
@@ -444,18 +458,6 @@ def index():
     res.headers['Pragma']        = 'no-cache'
     res.headers['Expires']       = '0'
     return res
-
-
-@app.route("/api/heartbeat")
-def api_heartbeat():
-    """재배포 감지 + 정지 상태 확인 + 잔액 동기화 — 클라이언트가 30초마다 폴링"""
-    banned, ban_msg = False, ""
-    balance = None
-    user = get_current_user()
-    if user:
-        banned, ban_msg = check_ban(user)
-        balance = user.balance
-    return jsonify({"build": BUILD_TS, "banned": banned, "banMessage": ban_msg, "balance": balance})
 
 
 @app.route("/api/me")
@@ -786,6 +788,21 @@ def api_trade():
         portfolio = json.loads(u.portfolio_json or "{}")
         cost_basis = json.loads(u.cost_basis_json or "{}")
 
+        # ── 잔액/보유량 선검증 (락 밖, 가격 변경 전) ──────
+        # BUG #2 #5 수정: 검증을 먼저 하고 통과한 거래만 가격에 반영
+        exec_price_pre = None
+        with _price_lock:
+            exec_price_pre = prices[aid]
+
+        total_pre = qty * exec_price_pre
+        if action == "buy" and u.balance < total_pre:
+            return jsonify({"ok": False, "error": "잔액이 부족합니다"})
+        if action == "sell":
+            holding_pre = portfolio.get(aid, 0)
+            if holding_pre < qty:
+                return jsonify({"ok": False, "error": "보유량이 부족합니다"})
+
+        # ── 가격 충격 계산 및 반영 (검증 통과 후에만) ────
         with _price_lock:
             current_price = prices[aid]
             shares = ASSET_SHARES.get(aid, 1_000_000_000)
@@ -800,29 +817,28 @@ def api_trade():
                 liq = 5 if shares < 500_000_000 else 2
 
             impact_pct = math.sqrt(raw_ratio) * liq * (1 if action == "buy" else -1)
-            is_small = aid in SMALL_COINS
-            max_drop = -0.60 if is_small else (-0.35 if asset_type == "coin" else -0.40)
-            # 즉시 가격 반영분: ±5% 이내로 제한
+            # BUG #3 수정: 즉시 반영분 ±5%, 누적분 클램프
             clamped = max(-0.05, min(0.05, impact_pct))
-            old_price = prices[aid]
+            exec_price = current_price  # 가격 변경 전 체결가
             floor = PRICE_FLOORS.get(aid, 1)
-            prices[aid] = max(floor, round(old_price * (1 + clamped)))
-            # trade_impact 누적분도 클램프 — 틱에서 복리 폭등 방지
-            current_impact = trade_impact.get(aid, 0.0)
-            added = max(-0.05, min(0.05, impact_pct * 0.4))
-            trade_impact[aid] = max(-0.30, min(0.30, current_impact + added))
+            prices[aid] = max(floor, round(current_price * (1 + clamped)))
             price_history[aid].append(prices[aid])
             if len(price_history[aid]) > 60:
                 price_history[aid].pop(0)
-            exec_price = old_price
+            current_impact = trade_impact.get(aid, 0.0)
+            added = max(-0.05, min(0.05, impact_pct * 0.4))
+            trade_impact[aid] = max(-0.30, min(0.30, current_impact + added))
+            new_price = prices[aid]  # BUG #7 수정: 락 안에서 읽기
 
         total = qty * exec_price
 
         if action == "buy":
+            # 체결 직전 재검증 (극히 드문 동시성 케이스 대비)
             if u.balance < total:
                 with _price_lock:
-                    prices[aid] = old_price
-                    trade_impact[aid] -= impact_pct * 0.4
+                    prices[aid] = exec_price
+                    trade_impact[aid] = current_impact
+                    price_history[aid].pop()
                 return jsonify({"ok": False, "error": "잔액이 부족합니다"})
             u.balance -= total
             portfolio[aid] = (portfolio.get(aid) or 0) + qty
@@ -831,36 +847,37 @@ def api_trade():
             holding = portfolio.get(aid, 0)
             if holding < qty:
                 with _price_lock:
-                    prices[aid] = old_price
-                    trade_impact[aid] -= impact_pct * 0.4
+                    prices[aid] = exec_price
+                    trade_impact[aid] = current_impact
+                    price_history[aid].pop()
                 return jsonify({"ok": False, "error": "보유량이 부족합니다"})
             u.balance += total
-            sell_ratio = qty / holding
-            cost_basis[aid] = (cost_basis.get(aid) or 0) * (1 - sell_ratio)
-            portfolio[aid] = holding - qty
-            if portfolio[aid] <= 0:
-                portfolio[aid] = 0
-                cost_basis[aid] = 0
+            # BUG #4 수정: 부동소수점 오차 방지 — 비율 대신 직접 차감
+            old_cost = cost_basis.get(aid) or 0
+            sold_cost = round(old_cost * qty / holding) if holding > 0 else 0
+            remaining = holding - qty
+            cost_basis[aid] = 0 if remaining <= 0 else max(0, old_cost - sold_cost)
+            portfolio[aid] = max(0, remaining)
 
         history = json.loads(u.history_json or "[]")
         history.append({"name": ASSET_NAMES.get(aid, aid), "type": action, "amount": total})
         history = history[-100:]
 
-        u.portfolio_json = json.dumps(portfolio)
+        u.portfolio_json  = json.dumps(portfolio)
         u.cost_basis_json = json.dumps(cost_basis)
-        u.history_json = json.dumps(history)
-        u.updated_at = datetime.now(timezone.utc)
+        u.history_json    = json.dumps(history)
+        u.updated_at      = datetime.now(timezone.utc)
         db.add(u)
         db.commit()
         final_balance = u.balance
 
     return jsonify({
-        "ok": True,
-        "balance": final_balance,
+        "ok":       True,
+        "balance":  final_balance,
         "portfolio": portfolio,
         "costBasis": cost_basis,
-        "history": history,
-        "newPrice": prices[aid],
+        "history":  history,
+        "newPrice": new_price,   # BUG #7 수정: 락 안에서 읽은 값
         "execPrice": exec_price,
         "impactPct": round(clamped * 100, 2),
     })
@@ -1259,14 +1276,23 @@ def api_loan_interest():
 
         total_interest = 0
         now = datetime.now(timezone.utc)
+        MIN_TICK_SECONDS = 55  # BUG #6 수정: 최소 55초 간격 미만이면 이자 계산 스킵 (중복 청구 방지)
         for loan in loans:
             last_tick_str = loan.get("lastTick") or loan.get("issuedAt")
-            if last_tick_str:
-                last_tick = datetime.fromisoformat(last_tick_str)
-                hours = (now - last_tick).total_seconds() / 3600
-                interest = round(loan["original"] * 0.008 * hours)
-                loan["remaining"] += interest
-                total_interest += interest
+            if not last_tick_str:
+                loan["lastTick"] = now.isoformat()
+                continue
+            last_tick = datetime.fromisoformat(last_tick_str)
+            # 타임존 정보 없으면 UTC로 강제
+            if last_tick.tzinfo is None:
+                last_tick = last_tick.replace(tzinfo=timezone.utc)
+            elapsed_seconds = (now - last_tick).total_seconds()
+            if elapsed_seconds < MIN_TICK_SECONDS:
+                continue  # 너무 짧은 간격 → 스킵
+            hours = elapsed_seconds / 3600
+            interest = round(loan["original"] * 0.008 * hours)
+            loan["remaining"] += interest
+            total_interest += interest
             loan["lastTick"] = now.isoformat()
 
         u.balance = max(0, u.balance - total_interest)
@@ -1309,9 +1335,18 @@ def api_tier_upgrade():
             return jsonify({"ok": False, "error": "한 단계씩만 승급 가능합니다."})
 
         cost = TIER_COSTS[target]
-        # 총 자산(현금) 기준으로 체크 — 포트폴리오 평가액은 클라이언트에서 확인
-        if u.balance < cost:
-            return jsonify({"ok": False, "error": f"현금이 부족합니다 (필요: ₩{cost:,})"})
+        # BUG #10 수정: 총 자산(현금 + 포트폴리오 평가액) 기준으로 체크
+        portfolio_val = 0
+        try:
+            portfolio_map = json.loads(u.portfolio_json or "{}")
+            with _price_lock:
+                for pid, pqty in portfolio_map.items():
+                    portfolio_val += prices.get(pid, 0) * pqty
+        except Exception:
+            portfolio_val = 0
+        total_asset = u.balance + portfolio_val
+        if total_asset < cost:
+            return jsonify({"ok": False, "error": f"총 자산이 부족합니다 (필요: ₩{cost:,} / 현재: ₩{int(total_asset):,})"})
 
         u.balance  -= cost
         u.tier_idx  = target

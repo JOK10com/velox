@@ -617,40 +617,6 @@ async function saveToServer() {
   } catch(e) {}
 }
 
-/* ── Heartbeat: 재배포 감지 + 정지 상태 체크 ── */
-let _buildTs = null;
-async function heartbeat() {
-  try {
-    const res  = await fetch('/api/heartbeat');
-    const data = await res.json();
-
-    // 1) 재배포 감지 — 서버 타임스탬프가 바뀌면 자동 새로고침
-    if (_buildTs === null) {
-      _buildTs = data.build;
-    } else if (data.build !== _buildTs) {
-      location.reload();
-      return;
-    }
-
-    // 2) 정지 감지 — 정지 먹은 유저는 즉시 차단 화면으로
-    if (state.loggedIn && data.banned) {
-      showBanScreen(data.banMessage);
-      return;
-    }
-
-    // 3) 잔액 동기화 — 송금 수신 등으로 잔액이 바뀌면 자동 반영
-    if (state.loggedIn && data.balance !== null && data.balance !== undefined) {
-      if (data.balance !== state.user.balance) {
-        const diff = data.balance - state.user.balance;
-        state.user.balance = data.balance;
-        updateSidebar();
-        if (diff > 0) showToast(`💸 ₩${fmt(diff)} 송금 수신!`, 'success');
-      }
-    }
-  } catch(e) { /* 일시적 연결 오류 무시 */ }
-}
-setInterval(heartbeat, 30_000); // 30초마다 체크
-
 window.addEventListener('DOMContentLoaded', () => {
   // OAuth 오류 파라미터 표시
   const params = new URLSearchParams(location.search);
@@ -1118,7 +1084,9 @@ function openTradeModal(assetId, action) {
   const isBuy   = action === 'buy';
 
   // 최대 수량 계산
-  const maxBuyQty  = Math.floor(state.user.balance / a.price);   // 잔고 전부 매수
+  // BUG #1 수정: 가격 충격(price impact)을 고려해 풀매수 수량을 95%로 보정
+  // 서버에서 거래 충격으로 가격이 소폭 오를 수 있어 그대로 계산하면 잔액 부족 에러 발생
+  const maxBuyQty  = Math.floor(state.user.balance / a.price * 0.95);
   const maxSellQty = holding;                                      // 전량 매도
 
   document.getElementById('trade-modal-title').textContent =
@@ -1221,9 +1189,10 @@ function updateTradePreview(id, action) {
       </div>`;
   } else {
     const cost    = state.costBasis[id] || 0;
-    const avgCost = holding > 0 ? cost / holding : 0;
+    // BUG #9 수정: 정수 반올림으로 부동소수점 오차 최소화
+    const avgCost  = holding > 0 ? Math.round(cost / holding) : 0;
     const sellCost = avgCost * qty;
-    const pnl     = total - sellCost;
+    const pnl      = total - sellCost;
     const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     const enough  = holding >= qty;
     preview.innerHTML = `
